@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+services:
+  game-save:
+    image: ${GAME_SAVE_IMAGE:-jun9100/game-save:v1.0.0}
+    user: "${PUID:-10001}:${PGID:-10001}"
+    environment:
+      GAME_SAVE_TOKEN: ${GAME_SAVE_TOKEN:?set GAME_SAVE_TOKEN in .env}
+      GAME_SAVE_ADMIN_TOKEN: ${GAME_SAVE_ADMIN_TOKEN:-}
+      GAME_SAVE_OPENSAVE_USERNAME: ${GAME_SAVE_OPENSAVE_USERNAME:-}
+      GAME_SAVE_OPENSAVE_PASSWORD: ${GAME_SAVE_OPENSAVE_PASSWORD:-}
+      GAME_SAVE_KEEP_SNAPSHOTS: ${GAME_SAVE_KEEP_SNAPSHOTS:-0}
+      GAME_SAVE_KEEP_DAYS: ${GAME_SAVE_KEEP_DAYS:-0}
+      TZ: ${TZ:-UTC}
+    ports:
+      - "${GAME_SAVE_BIND_ADDRESS:-127.0.0.1}:${GAME_SAVE_PORT:-8788}:8787"
+    volumes:
+      - ${GAME_SAVE_DATA_DIR:-/var/lib/game-save}:/var/lib/game-save
+    restart: unless-stopped

@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+services:
+  game-save:
+    build: .
+    image: game-save:local
+    environment:
+      GAME_SAVE_TOKEN: ${GAME_SAVE_TOKEN:?set GAME_SAVE_TOKEN in .env}
+      # Optional. Enables the protected LAN dashboard at /admin/.
+      GAME_SAVE_ADMIN_TOKEN: ${GAME_SAVE_ADMIN_TOKEN:-}
+      # Optional. Set both to expose OpenSave's separate WebDAV collection at /opensave/.
+      GAME_SAVE_OPENSAVE_USERNAME: ${GAME_SAVE_OPENSAVE_USERNAME:-}
+      GAME_SAVE_OPENSAVE_PASSWORD: ${GAME_SAVE_OPENSAVE_PASSWORD:-}
+      GAME_SAVE_KEEP_SNAPSHOTS: ${GAME_SAVE_KEEP_SNAPSHOTS:-0}
+      GAME_SAVE_KEEP_DAYS: ${GAME_SAVE_KEEP_DAYS:-0}
+      TZ: ${TZ:-UTC}
+    ports:
+      - "${GAME_SAVE_BIND_ADDRESS:-127.0.0.1}:${GAME_SAVE_PORT:-8787}:8787"
+    volumes:
+      - ${GAME_SAVE_DATA_DIR:-./data}:/var/lib/game-save
+    restart: unless-stopped
