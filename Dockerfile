@@ -1,17 +1,14 @@
 # SPDX-FileCopyrightText: Copyright 2026 Eden Emulator Project
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
-ARG TARGETOS
-ARG TARGETARCH
+FROM golang:1.26-alpine AS build
 ARG VERSION=dev
 WORKDIR /src
 COPY go.mod ./
 COPY *.go ./
 COPY web ./web
 RUN go vet ./... \
-    && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-       go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/game-save .
+    && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/game-save .
 
 FROM alpine:3.22
 ARG VERSION=dev
