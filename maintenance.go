@@ -39,7 +39,7 @@ func (s *server) prunableLocked(stored scope, now time.Time) []string {
 	}
 	var removable []string
 	for index, item := range stored.sortedSnapshots() {
-		if item.ID == stored.Head || item.Pinned {
+		if item.ID == stored.Head || item.Pinned || item.Conflict {
 			continue
 		}
 		withinCount := policy.KeepSnapshots > 0 && index < policy.KeepSnapshots

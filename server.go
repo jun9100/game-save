@@ -30,7 +30,7 @@ const (
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
-var version = "v1.0.0-dev"
+var version = "v1.1.0-dev"
 
 type server struct {
 	dataDir          string
@@ -40,6 +40,7 @@ type server struct {
 	openSavePassword string
 	maxObjectBytes   int64
 	startedAt        time.Time
+	bark             *barkNotifier
 
 	mu        sync.Mutex
 	state     serverState
@@ -57,6 +58,7 @@ type serverOptions struct {
 	openSaveUsername string
 	openSavePassword string
 	settings         serverSettings
+	bark             barkConfig
 }
 
 func newServer(dataDir, token string, maxObjectBytes int64, adminTokens ...string) (*server, error) {
@@ -84,11 +86,21 @@ func newServerWithOptions(dataDir, token string, maxObjectBytes int64, options s
 	if !options.settings.Retention.valid() {
 		return nil, errors.New("invalid retention policy")
 	}
+	bark, err := newBarkNotifier(options.bark)
+	if err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(filepath.Join(dataDir, "objects"), 0o700); err != nil {
+		if bark != nil {
+			bark.Close()
+		}
 		return nil, fmt.Errorf("create data directory: %w", err)
 	}
 	if options.openSaveUsername != "" {
 		if err := os.MkdirAll(filepath.Join(dataDir, "opensave"), 0o700); err != nil {
+			if bark != nil {
+				bark.Close()
+			}
 			return nil, fmt.Errorf("create OpenSave data directory: %w", err)
 		}
 	}
@@ -101,6 +113,7 @@ func newServerWithOptions(dataDir, token string, maxObjectBytes int64, options s
 		openSavePassword: options.openSavePassword,
 		maxObjectBytes:   maxObjectBytes,
 		startedAt:        time.Now().UTC(),
+		bark:             bark,
 		state:            serverState{Scopes: make(map[string]scope)},
 		dashboard: dashboardState{
 			Scopes:  make(map[string]scopeMetadata),
@@ -109,18 +122,29 @@ func newServerWithOptions(dataDir, token string, maxObjectBytes int64, options s
 		logins: loginLimiter{failures: make(map[string]loginFailures)},
 	}
 	if err := s.loadState(); err != nil {
+		s.Close()
 		return nil, err
 	}
 	if err := s.loadDashboard(); err != nil {
+		s.Close()
 		return nil, err
 	}
 	if err := s.loadSettings(options.settings); err != nil {
+		s.Close()
 		return nil, err
 	}
 	if err := s.loadEvents(); err != nil {
+		s.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+// Close releases resources that are not tied to the HTTP server itself.
+func (s *server) Close() {
+	if s.bark != nil {
+		s.bark.Close()
+	}
 }
 
 func (s *server) handler() http.Handler {
@@ -132,6 +156,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/scopes", s.requireToken(s.handleListScopes))
 	mux.HandleFunc("GET /v1/scopes/{id}/head", s.requireToken(s.handleGetHead))
 	mux.HandleFunc("PUT /v1/scopes/{id}/snapshots/{snapshot}", s.requireToken(s.handlePutSnapshot))
+	mux.HandleFunc("PUT /v1/scopes/{id}/conflicts/{snapshot}", s.requireToken(s.handlePutConflictSnapshot))
 	mux.HandleFunc("PUT /v1/scopes/{id}/metadata", s.requireToken(s.handlePutScopeMetadata))
 	mux.HandleFunc("POST /v1/devices/heartbeat", s.requireToken(s.handleDeviceHeartbeat))
 

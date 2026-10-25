@@ -275,7 +275,7 @@ function describeEvent(item) {
   const device = `<b>${esc(deviceName(item.device))}</b>`;
   switch (item.kind) {
     case "upload": return [`${device} 上传了 ${scope}`, item.detail];
-    case "conflict": return [`${device} 上传 ${scope} 时发生冲突`, "云端已有更新版本，冲突快照保留在该设备本地"];
+    case "conflict": return [`${device} 上传 ${scope} 时发生冲突`, "云端与冲突副本均已保留，请在快照历史中确认后设为当前版本"];
     case "rollback": return [`${scope} 已恢复到旧版本`, `来源快照 ${shortID((item.detail || "").replace(/^restored /, ""), 16)}`];
     case "delete_snapshot": return [`删除了 ${scope} 的一个快照`, shortID(item.snapshot, 24)];
     case "delete_scope": return [`删除了存档范围 ${item.detail ? `<b>${esc(item.detail)}</b>` : scope}`, ""];
@@ -538,6 +538,7 @@ async function renderScope(id) {
 function snapshotRow(item) {
   const badges = [];
   if (item.head) badges.push(`<span class="badge accent">当前版本</span>`);
+  if (item.conflict) badges.push(`<span class="badge warn" title="与当前云端版本冲突，已固定保留">冲突副本</span>`);
   if (item.pinned) badges.push(`<span class="badge ok">${icon("pin")}已固定</span>`);
   if (item.restored_of) badges.push(`<span class="badge warn" title="${esc(item.restored_of)}">${icon("restore")}恢复自 ${esc(shortID(item.restored_of, 14))}</span>`);
   if (item.shared_blob) badges.push(`<span class="badge" title="与其他快照共享同一加密对象">去重</span>`);
@@ -548,11 +549,11 @@ function snapshotRow(item) {
         <span class="hint">${esc(relTime(item.created_at))}</span>${badges.join("")}</div>
       <div class="snap-meta"><span>${esc(deviceName(item.device))}</span><span>${formatBytes(item.size)}</span>
         <code title="${esc(item.id)}">${esc(shortID(item.id, 22))}</code>
-        ${item.parent_missing ? `<span title="父版本已被清理">父版本已清理</span>` : ""}</div>
+        ${item.conflict ? `<span title="冲突时的云端当前版本：${esc(item.conflict_of || "未知")}">与云端版本冲突</span>` : item.parent_missing ? `<span title="父版本已被清理">父版本已清理</span>` : ""}</div>
     </div>
     <div class="snap-actions">
       ${item.head ? "" : `<button class="icon-btn" data-action="rollback" data-id="${esc(item.id)}" title="设为当前版本">${icon("restore")}</button>`}
-      <button class="icon-btn" data-action="pin" data-id="${esc(item.id)}" data-pinned="${item.pinned ? 1 : 0}" title="${item.pinned ? "取消固定" : "固定（不会被保留策略清理）"}">${icon("pin")}</button>
+      ${item.conflict ? "" : `<button class="icon-btn" data-action="pin" data-id="${esc(item.id)}" data-pinned="${item.pinned ? 1 : 0}" title="${item.pinned ? "取消固定" : "固定（不会被保留策略清理）"}">${icon("pin")}</button>`}
       <a class="icon-btn" href="api/scopes/${encodeURIComponent(store.scopeDetail.scope.id)}/snapshots/${encodeURIComponent(item.id)}/download" title="下载加密快照" download>${icon("download")}</a>
       ${item.head ? "" : `<button class="icon-btn danger" data-action="delete-snapshot" data-id="${esc(item.id)}" title="删除快照">${icon("trash")}</button>`}
     </div>

@@ -115,6 +115,8 @@ type snapshotView struct {
 	Head          bool      `json:"head"`
 	Pinned        bool      `json:"pinned"`
 	RestoredOf    string    `json:"restored_of,omitempty"`
+	Conflict      bool      `json:"conflict,omitempty"`
+	ConflictOf    string    `json:"conflict_of,omitempty"`
 	SharedBlob    bool      `json:"shared_blob,omitempty"`
 }
 
@@ -370,6 +372,8 @@ func (s *server) handleScopeDetail(w http.ResponseWriter, r *http.Request) {
 			Head:          item.ID == stored.Head,
 			Pinned:        item.Pinned,
 			RestoredOf:    item.RestoredOf,
+			Conflict:      item.Conflict,
+			ConflictOf:    item.ConflictOf,
 			SharedBlob:    blobUsers[item.Blob] > 1,
 		})
 	}
@@ -616,6 +620,10 @@ func (s *server) handlePatchSnapshot(w http.ResponseWriter, r *http.Request) {
 	record, ok := stored.Snapshots[snapshotID]
 	if !ok {
 		writeError(w, http.StatusNotFound, "snapshot not found")
+		return
+	}
+	if record.Conflict && !request.Pinned {
+		writeError(w, http.StatusConflict, "a conflict snapshot must be deleted explicitly")
 		return
 	}
 	record.Pinned = request.Pinned

@@ -30,6 +30,8 @@ type snapshotRecord struct {
 	ReceivedAt time.Time `json:"received_at,omitzero"`
 	Pinned     bool      `json:"pinned,omitempty"`
 	RestoredOf string    `json:"restored_of,omitempty"`
+	Conflict   bool      `json:"conflict,omitempty"`
+	ConflictOf string    `json:"conflict_of,omitempty"`
 }
 
 type scope struct {
