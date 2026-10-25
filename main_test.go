@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -56,6 +57,7 @@ func authorizedRequest(t *testing.T, method, url string, body []byte) *http.Requ
 		t.Fatal(err)
 	}
 	request.Header.Set("Authorization", "Bearer "+testToken)
+	request.Header.Set(edenSaveSyncProtocolHeader, strconv.Itoa(minimumEdenSaveSyncProtocol))
 	return request
 }
 
@@ -122,6 +124,30 @@ func TestBlobRequiresTokenAndIsContentAddressed(t *testing.T) {
 	}
 }
 
+func TestLegacySaveSyncClientCannotWrite(t *testing.T) {
+	_, httpServer := newTestServer(t)
+	defer httpServer.Close()
+
+	payload := []byte("blocked legacy upload")
+	digest := sha256.Sum256(payload)
+	request := authorizedRequest(t, http.MethodPut,
+		httpServer.URL+"/v1/blobs/"+hex.EncodeToString(digest[:]), payload)
+	request.Header.Del(edenSaveSyncProtocolHeader)
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusUpgradeRequired {
+		t.Fatalf("legacy upload status = %d", response.StatusCode)
+	}
+	if response.Header.Get(edenSaveSyncMinimumVersionKey) != "2" {
+		t.Fatalf("minimum protocol header = %q", response.Header.Get(edenSaveSyncMinimumVersionKey))
+	}
+
+	putObject(t, httpServer.URL, payload)
+}
+
 func TestSnapshotCompareAndSwapPreservesConflict(t *testing.T) {
 	_, httpServer := newTestServer(t)
 	defer httpServer.Close()
@@ -164,6 +190,106 @@ func TestSnapshotCompareAndSwapPreservesConflict(t *testing.T) {
 	}
 	if conflict["head"] != first.ID {
 		t.Fatalf("conflict head = %q", conflict["head"])
+	}
+}
+
+func TestConflictSnapshotIsPinnedAndCanBeRestored(t *testing.T) {
+	s, httpServer := newAdminTestServer(t, t.TempDir())
+	defer httpServer.Close()
+
+	now := time.Now().UTC()
+	headBlob := putObject(t, httpServer.URL, []byte("cloud head"))
+	commitSnapshot(t, httpServer.URL, "scope-1", snapshot{ID: "head-1", Blob: headBlob, CreatedAt: now}, "", "device-cloud")
+	conflictBlob := putObject(t, httpServer.URL, []byte("newer local progress"))
+	candidate := snapshot{
+		ID:        "conflict-1",
+		Blob:      conflictBlob,
+		Parent:    "local-unverified-1",
+		CreatedAt: now.Add(time.Second),
+	}
+	payload, err := json.Marshal(candidate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := authorizedRequest(t, http.MethodPut,
+		httpServer.URL+"/v1/scopes/scope-1/conflicts/"+candidate.ID, payload)
+	request.Header.Set("X-Eden-Device-ID", "device-local")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("retain conflict status = %d", response.StatusCode)
+	}
+
+	response, err = http.DefaultClient.Do(authorizedRequest(t, http.MethodGet,
+		httpServer.URL+"/v1/scopes/scope-1/head", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var head snapshot
+	if err := json.NewDecoder(response.Body).Decode(&head); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if head.ID != "head-1" {
+		t.Fatalf("conflict unexpectedly advanced head: %+v", head)
+	}
+
+	response, body := adminDo(t, http.MethodGet, httpServer.URL+"/admin/api/scopes/scope-1", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("detail status = %d: %s", response.StatusCode, body)
+	}
+	var detail struct {
+		Snapshots []snapshotView `json:"snapshots"`
+	}
+	if err := json.Unmarshal(body, &detail); err != nil {
+		t.Fatal(err)
+	}
+	var retained *snapshotView
+	for index := range detail.Snapshots {
+		if detail.Snapshots[index].ID == candidate.ID {
+			retained = &detail.Snapshots[index]
+			break
+		}
+	}
+	if retained == nil || !retained.Conflict || !retained.Pinned || retained.ConflictOf != "head-1" {
+		t.Fatalf("retained conflict = %+v", retained)
+	}
+
+	s.mu.Lock()
+	s.settings.Retention = retentionPolicy{KeepSnapshots: 1}
+	for _, id := range s.prunableLocked(s.state.Scopes["scope-1"], now.Add(24*time.Hour)) {
+		if id == candidate.ID {
+			s.mu.Unlock()
+			t.Fatal("retention selected a conflict snapshot")
+		}
+	}
+	s.mu.Unlock()
+
+	if response, _ := adminDo(t, http.MethodPatch,
+		httpServer.URL+"/admin/api/scopes/scope-1/snapshots/"+candidate.ID,
+		map[string]bool{"pinned": false}); response.StatusCode != http.StatusConflict {
+		t.Fatalf("unpin conflict status = %d", response.StatusCode)
+	}
+
+	response, body = adminDo(t, http.MethodPost, httpServer.URL+"/admin/api/scopes/scope-1/rollback",
+		map[string]string{"snapshot": candidate.ID})
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("restore conflict status = %d: %s", response.StatusCode, body)
+	}
+	response, err = http.DefaultClient.Do(authorizedRequest(t, http.MethodGet,
+		httpServer.URL+"/v1/scopes/scope-1/head", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewDecoder(response.Body).Decode(&head); err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if head.Blob != conflictBlob {
+		t.Fatalf("restored conflict head = %+v", head)
 	}
 }
 

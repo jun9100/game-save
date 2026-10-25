@@ -54,6 +54,7 @@ func (s *server) recordEventLocked(item event) {
 		slog.Warn("persist activity log", "error", err)
 	}
 	s.events = next
+	s.notifyBarkLocked(item)
 }
 
 // recentEventsLocked returns up to limit events, newest first. The caller must hold s.mu.

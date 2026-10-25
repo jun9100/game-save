@@ -90,6 +90,16 @@ func main() {
 		"OpenSave WebDAV username")
 	openSavePassword := flag.String("opensave-password", envString("GAME_SAVE_OPENSAVE_PASSWORD", "EDEN_SYNCD_OPENSAVE_PASSWORD", ""),
 		"OpenSave WebDAV password")
+	barkURL := flag.String("bark-url", envString("GAME_SAVE_BARK_URL", "EDEN_SYNCD_BARK_URL", ""),
+		"Bark base URL including the device path")
+	barkGroup := flag.String("bark-group", envString("GAME_SAVE_BARK_GROUP", "EDEN_SYNCD_BARK_GROUP", "game-save"),
+		"Bark notification group")
+	barkTTL := flag.Int("bark-ttl", envInt("GAME_SAVE_BARK_TTL", "EDEN_SYNCD_BARK_TTL", defaultBarkTTL),
+		"Bark notification TTL in seconds")
+	barkEvents := flag.String("bark-events", envString("GAME_SAVE_BARK_EVENTS", "EDEN_SYNCD_BARK_EVENTS", eventConflict),
+		"comma-separated Bark event kinds")
+	barkTimeout := flag.Duration("bark-timeout", envDuration("GAME_SAVE_BARK_TIMEOUT", "EDEN_SYNCD_BARK_TIMEOUT", defaultBarkTimeout),
+		"Bark request timeout")
 	maxObjectMiB := flag.Int64("max-object-mib", int64(envInt("GAME_SAVE_MAX_OBJECT_MIB", "EDEN_SYNCD_MAX_OBJECT_MIB",
 		int(defaultMaxObjectBytes/(1024*1024)))), "maximum object size in MiB")
 	keepSnapshots := flag.Int("keep-snapshots", envInt("GAME_SAVE_KEEP_SNAPSHOTS", "EDEN_SYNCD_KEEP_SNAPSHOTS", 0),
@@ -121,11 +131,19 @@ func main() {
 			KeepSnapshots: *keepSnapshots,
 			KeepDays:      *keepDays,
 		}},
+		bark: barkConfig{
+			Endpoint: *barkURL,
+			Group:    *barkGroup,
+			TTL:      *barkTTL,
+			Events:   *barkEvents,
+			Timeout:  *barkTimeout,
+		},
 	})
 	if err != nil {
 		slog.Error("start", "error", err)
 		os.Exit(1)
 	}
+	defer s.Close()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

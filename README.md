@@ -5,8 +5,8 @@ is the standalone successor to `eden-syncd`: the existing Eden protocol remains
 available, while OpenSave uses a separate, typed archive API. The service never
 interprets game-save contents.
 
-The first standalone release is `v1.0.0` and is published as
-`jun9100/game-save:v1.0.0` for `linux/amd64` and `linux/arm64`.
+The current standalone release is `v1.1.0` and is published as
+`jun9100/game-save:v1.1.0` for `linux/amd64` and `linux/arm64`.
 
 ## Client Protocols
 
@@ -77,6 +77,11 @@ native OpenSave upload) `opensave-native/`. Back up the entire directory.
 | `--keep-snapshots` | `GAME_SAVE_KEEP_SNAPSHOTS` | `0` (unlimited) |
 | `--keep-days` | `GAME_SAVE_KEEP_DAYS` | `0` (unlimited) |
 | `--maintenance-interval` | `GAME_SAVE_MAINTENANCE_INTERVAL` | `6h` |
+| `--bark-url` | `GAME_SAVE_BARK_URL` | disabled |
+| `--bark-group` | `GAME_SAVE_BARK_GROUP` | `game-save` |
+| `--bark-ttl` | `GAME_SAVE_BARK_TTL` | `600` seconds |
+| `--bark-events` | `GAME_SAVE_BARK_EVENTS` | `conflict` |
+| `--bark-timeout` | `GAME_SAVE_BARK_TIMEOUT` | `5s` |
 | `--log-format` | `GAME_SAVE_LOG_FORMAT` | `text` or `json` |
 
 `game-save healthcheck` probes `GET /healthz`. `game-save --version` reports
@@ -94,6 +99,56 @@ The health endpoint is unauthenticated. All `/v1` endpoints require the sync
 token. Set an administrator token different from the sync token to enable the
 private dashboard at `/admin/`.
 
+Eden save writes require Save Sync protocol v2. Upgrade every Eden client
+before deploying the `game-save` release that enables this requirement: older
+clients can still read, but cannot upload a stale local save as a new cloud
+head. OpenSave's separate native and WebDAV endpoints are unaffected.
+
+When current clients detect divergent local files, they preserve the candidate
+as a fixed **conflict copy** instead of advancing the cloud head. It appears in
+the dashboard's snapshot history and can be inspected, downloaded, or made
+current with the existing restore action. Conflict copies are never removed by
+the retention policy; delete one explicitly after reviewing it.
+
+## Preventing Save Rollback
+
+`game-save` does not use wall-clock time as the authority for a save. A client
+may only advance a cloud head when its local files match the content digest of
+the head it previously confirmed. A stale local directory, manual replacement,
+or interrupted session is retained as a conflict copy instead. During the v2
+client migration, an existing local directory must first match a read-only
+download of the cloud head before it becomes trusted.
+
+For reliable cross-device play:
+
+1. Upgrade every Eden client to Save Sync protocol v2 before upgrading the
+   server to `v1.1.0` or later.
+2. Play one title on only one device at a time. Stop emulation normally and
+   keep that device online until it returns to the game library before opening
+   the same title elsewhere.
+3. After a forced process kill, power loss, or network outage, reopen Eden on
+   the device that was playing first. It retries the locally persisted snapshot
+   before continuing that title on another device.
+4. If a conflict copy appears, stop both sessions, compare the actual game
+   state, and use the dashboard's restore action once. The matching device
+   recognizes the selected cloud content and resumes ordinary synchronization.
+
+## Bark Notifications
+
+Set `GAME_SAVE_BARK_URL` to the Bark base URL including its device path. A
+complete URL copied from a Bark `curl` example is also accepted: its final
+`/title/body` segments and query string are removed automatically. For example,
+`https://bark.example.com/device-key/title/body` becomes
+`https://bark.example.com/device-key`.
+
+`game-save` calls Bark asynchronously after its local activity event is
+persisted. A Bark outage never blocks an upload, conflict response, dashboard
+action, or maintenance task. The default only notifies `conflict`, which is the
+actionable condition where a device attempted to advance a stale cloud head and
+its local snapshot was retained. Set `GAME_SAVE_BARK_EVENTS=conflict,upload`
+to also receive successful uploads. Duplicate events for the same game, device,
+and cloud head are coalesced for five minutes.
+
 ## Docker And NAS Deployment
 
 Copy [`.env.example`](.env.example) to `.env`, replace placeholders, then use a
@@ -103,7 +158,7 @@ fixed release tag rather than `latest`:
 docker compose -f compose.nas.yaml up -d
 ```
 
-`compose.nas.yaml` defaults to `jun9100/game-save:v1.0.0`, maps the service to
+`compose.nas.yaml` defaults to `jun9100/game-save:v1.1.0`, maps the service to
 port `8788`, and stores data at `/volume1/docker/game-save/data`. Set `PUID` and
 `PGID` to the owner of that directory. The generic default binds to loopback;
 choose the NAS private address only when the LAN firewall protects the port.
@@ -138,7 +193,7 @@ for any remote access.
 ```sh
 go test ./...
 go vet ./...
-docker build --build-arg VERSION=v1.0.0 -t game-save:v1.0.0 .
+docker build --build-arg VERSION=v1.1.0 -t game-save:v1.1.0 .
 ```
 
 The GitHub Actions release workflow publishes multi-architecture Docker Hub

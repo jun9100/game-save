@@ -17,12 +17,33 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
 
 // Handlers for the /v1 API used by Eden clients. The request and response shapes here are part of
 // the client protocol and must remain compatible with released Eden builds.
+
+const (
+	edenSaveSyncProtocolHeader    = "X-Eden-Save-Sync-Protocol"
+	minimumEdenSaveSyncProtocol   = 2
+	edenSaveSyncMinimumVersionKey = "X-Eden-Save-Sync-Min-Version"
+)
+
+// requireCurrentEdenSaveSyncProtocol blocks pre-baseline clients from writing. Older clients only
+// track a remembered head and can otherwise advance it with stale local files after an interrupted
+// session. Reads remain available so an upgraded client can recover normally.
+func requireCurrentEdenSaveSyncProtocol(w http.ResponseWriter, r *http.Request) bool {
+	version, err := strconv.Atoi(strings.TrimSpace(r.Header.Get(edenSaveSyncProtocolHeader)))
+	if err == nil && version >= minimumEdenSaveSyncProtocol {
+		return true
+	}
+	w.Header().Set(edenSaveSyncMinimumVersionKey, strconv.Itoa(minimumEdenSaveSyncProtocol))
+	writeError(w, http.StatusUpgradeRequired,
+		"Eden Save Sync client protocol version 2 or newer is required for writes")
+	return false
+}
 
 func (s *server) requireToken(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +135,9 @@ func (s *server) handleDeviceHeartbeat(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *server) handlePutBlob(w http.ResponseWriter, r *http.Request) {
+	if !requireCurrentEdenSaveSyncProtocol(w, r) {
+		return
+	}
 	id := r.PathValue("id")
 	if !validObjectID(id) {
 		writeError(w, http.StatusBadRequest, "invalid blob id")
@@ -236,30 +260,27 @@ func (s *server) handleGetHead(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, storedScope.Snapshots[storedScope.Head].snapshot)
 }
 
-func (s *server) handlePutSnapshot(w http.ResponseWriter, r *http.Request) {
-	scopeID := r.PathValue("id")
-	snapshotID := r.PathValue("snapshot")
-	if !validScopeID(scopeID) || !validSnapshotID(snapshotID) {
-		writeError(w, http.StatusBadRequest, "invalid scope or snapshot id")
-		return
-	}
-
+func decodeSnapshotCandidate(w http.ResponseWriter, r *http.Request, snapshotID string) (snapshot, bool) {
 	var candidate snapshot
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxMetadataBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&candidate); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid snapshot metadata")
-		return
+		return snapshot{}, false
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid snapshot metadata")
-		return
+		return snapshot{}, false
 	}
 	if candidate.ID != snapshotID || !validObjectID(candidate.Blob) ||
 		(candidate.Parent != "" && !validSnapshotID(candidate.Parent)) || candidate.CreatedAt.IsZero() {
 		writeError(w, http.StatusBadRequest, "invalid snapshot fields")
-		return
+		return snapshot{}, false
 	}
+	return candidate, true
+}
+
+func (s *server) snapshotBlobSize(w http.ResponseWriter, candidate snapshot) (int64, bool) {
 	info, err := os.Stat(s.objectPath(candidate.Blob))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -267,6 +288,27 @@ func (s *server) handlePutSnapshot(w http.ResponseWriter, r *http.Request) {
 		} else {
 			writeError(w, http.StatusInternalServerError, "cannot inspect snapshot blob")
 		}
+		return 0, false
+	}
+	return info.Size(), true
+}
+
+func (s *server) handlePutSnapshot(w http.ResponseWriter, r *http.Request) {
+	if !requireCurrentEdenSaveSyncProtocol(w, r) {
+		return
+	}
+	scopeID := r.PathValue("id")
+	snapshotID := r.PathValue("snapshot")
+	if !validScopeID(scopeID) || !validSnapshotID(snapshotID) {
+		writeError(w, http.StatusBadRequest, "invalid scope or snapshot id")
+		return
+	}
+	candidate, ok := decodeSnapshotCandidate(w, r, snapshotID)
+	if !ok {
+		return
+	}
+	blobSize, ok := s.snapshotBlobSize(w, candidate)
+	if !ok {
 		return
 	}
 
@@ -294,7 +336,7 @@ func (s *server) handlePutSnapshot(w http.ResponseWriter, r *http.Request) {
 	nextScope.Head = snapshotID
 	nextScope.Snapshots[snapshotID] = snapshotRecord{
 		snapshot:   candidate,
-		Size:       info.Size(),
+		Size:       blobSize,
 		Device:     deviceID,
 		ReceivedAt: time.Now().UTC(),
 	}
@@ -306,7 +348,7 @@ func (s *server) handlePutSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	s.state = nextState
 	s.recordEventLocked(event{Kind: eventUpload, Scope: scopeID, Snapshot: snapshotID,
-		Device: deviceID, Detail: formatBytes(info.Size())})
+		Device: deviceID, Detail: formatBytes(blobSize)})
 	if s.settings.Retention.enabled() {
 		if removed, err := s.pruneScopeLocked(scopeID, time.Now().UTC()); err != nil {
 			slog.Warn("apply retention", "scope", scopeID, "error", err)
@@ -315,6 +357,71 @@ func (s *server) handlePutSnapshot(w http.ResponseWriter, r *http.Request) {
 				Detail: "removed " + itoa(removed) + " snapshots"})
 		}
 	}
+	writeJSON(w, http.StatusCreated, candidate)
+}
+
+// handlePutConflictSnapshot persists a rejected client branch without moving the scope head. The
+// record is pinned until an administrator explicitly deletes it, so a retention policy cannot erase
+// the only copy of progress that needs review.
+func (s *server) handlePutConflictSnapshot(w http.ResponseWriter, r *http.Request) {
+	if !requireCurrentEdenSaveSyncProtocol(w, r) {
+		return
+	}
+	scopeID, snapshotID := r.PathValue("id"), r.PathValue("snapshot")
+	if !validScopeID(scopeID) || !validSnapshotID(snapshotID) {
+		writeError(w, http.StatusBadRequest, "invalid scope or snapshot id")
+		return
+	}
+	candidate, ok := decodeSnapshotCandidate(w, r, snapshotID)
+	if !ok {
+		return
+	}
+	blobSize, ok := s.snapshotBlobSize(w, candidate)
+	if !ok {
+		return
+	}
+
+	deviceID := requestDeviceID(r)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	storedScope, exists := s.state.Scopes[scopeID]
+	if !exists || storedScope.Head == "" {
+		writeError(w, http.StatusNotFound, "scope has no current snapshot")
+		return
+	}
+	if existing, exists := storedScope.Snapshots[snapshotID]; exists {
+		if existing.snapshot == candidate && existing.Conflict {
+			writeJSON(w, http.StatusOK, existing.snapshot)
+			return
+		}
+		writeError(w, http.StatusConflict, "snapshot id already exists")
+		return
+	}
+	if candidate.Parent == storedScope.Head {
+		writeError(w, http.StatusConflict, "snapshot still matches the current head")
+		return
+	}
+
+	now := time.Now().UTC()
+	nextScope := storedScope.clone()
+	nextScope.Snapshots[snapshotID] = snapshotRecord{
+		snapshot:   candidate,
+		Size:       blobSize,
+		Device:     deviceID,
+		ReceivedAt: now,
+		Pinned:     true,
+		Conflict:   true,
+		ConflictOf: storedScope.Head,
+	}
+	nextState := s.state.clone()
+	nextState.Scopes[scopeID] = nextScope
+	if err := s.persistState(nextState); err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot persist conflict snapshot")
+		return
+	}
+	s.state = nextState
+	s.recordEventLocked(event{Kind: eventConflict, Scope: scopeID, Snapshot: snapshotID,
+		Device: deviceID, Detail: "retained against " + storedScope.Head})
 	writeJSON(w, http.StatusCreated, candidate)
 }
 
