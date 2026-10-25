@@ -145,7 +145,32 @@ func TestLegacySaveSyncClientCannotWrite(t *testing.T) {
 		t.Fatalf("minimum protocol header = %q", response.Header.Get(edenSaveSyncMinimumVersionKey))
 	}
 
-	putObject(t, httpServer.URL, payload)
+	object := putObject(t, httpServer.URL, payload)
+	metadata, err := json.Marshal(snapshot{
+		ID:        "legacy-snapshot",
+		Blob:      object,
+		Parent:    "local-unverified-1",
+		CreatedAt: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{
+		"/v1/scopes/scope-1/snapshots/legacy-snapshot",
+		"/v1/scopes/scope-1/conflicts/legacy-snapshot",
+	} {
+		request := authorizedRequest(t, http.MethodPut, httpServer.URL+path, metadata)
+		request.Header.Del(edenSaveSyncProtocolHeader)
+		request.Header.Set("If-Match", `""`)
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusUpgradeRequired {
+			t.Fatalf("legacy write %s status = %d", path, response.StatusCode)
+		}
+	}
 }
 
 func TestSnapshotCompareAndSwapPreservesConflict(t *testing.T) {
