@@ -1,5 +1,8 @@
 # Game Save
 
+The cross-component delivery contract and release gates are in
+[`docs/INTEGRATION_ROADMAP.md`](docs/INTEGRATION_ROADMAP.md).
+
 `game-save` is a self-hosted private backend for game-save synchronization. It
 is the standalone successor to `eden-syncd`: the existing Eden protocol remains
 available, while OpenSave uses a separate, typed archive API. The service never
