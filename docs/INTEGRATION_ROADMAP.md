@@ -33,10 +33,10 @@ by the planned OpenSave synchronization flow.
 
 | Component | Baseline | Required behavior before shared-save use | Next release gate |
 | --- | --- | --- | --- |
-| `game-save` | `v1.4.1` | Eden protocol v2 is required for all Eden writes; OpenSave has immutable typed CAS scopes and both Eden/OpenSave scope reads are read-only. | P4 operational evidence: image publication, backup/restore drill, and notification failure isolation. |
-| Eden | `v2026.10.25-1` | Uses the v2 protocol, records confirmed content state, preserves restore copies, quarantines unsafe pending chains, and creates conflicts instead of overwriting a newer cloud head. | Add per-title sync-state visibility and isolated regression coverage. |
-| OpenSave desktop | `v2.4.5` | Uses the native provider, with PC/Switch/emulator namespaces isolated. | Add per-save sync status and a manifest-based restore/conflict contract. |
-| OpenSave Android | `0.3.15 (20)` | Supports selected Root and SAF roots, type filters, icons/names, and batch/automatic backups. | Add source-capability state, native sync status, and isolated device regression coverage. Android artifacts remain CI-only until the P5 device matrix passes. |
+| `game-save` | `v1.4.1` | Eden protocol v2 is required for all Eden writes; OpenSave has immutable typed CAS scopes and both Eden/OpenSave scope reads are read-only. | Run the isolated backup/restore and image-upgrade rows before changing a NAS container. |
+| Eden | `v2026.10.25-1` | Uses the v2 protocol, records confirmed content state, preserves restore copies, quarantines unsafe pending chains, creates conflicts instead of overwriting a newer cloud head, and has a read-only per-title status view. | Run the desktop/Android P5 rows against a disposable profile/title. |
+| OpenSave desktop | `v2.4.5` | Uses the native provider, with PC/Switch/emulator namespaces isolated and a per-scope status/conflict view. | Run the Windows P5 rows against disposable roots. |
+| OpenSave Android | `0.3.15 (20)` | Supports selected Root and SAF roots, type filters, icons/names, batch/automatic backups, and explicit source capability state. | Run the Root/SAF P5 rows; Android artifacts remain CI-only until those rows pass. |
 
 Older Eden clients remain readable but are intentionally unable to write to a v2 `game-save` service. All
 devices sharing an Eden save must be upgraded before they are used interchangeably.
@@ -50,11 +50,11 @@ never permission to replace a NAS container, and an Android build is never permi
 | --- | --- | --- |
 | P1 server lineage, conflict retention, and recovery protection | Delivered | `game-save` protocol-v2 writes and immutable conflict copies are in released server code. |
 | P2 server read-only status | Delivered | `game-save v1.4.1` returns Eden scope state without heartbeats; native OpenSave archive, scope, and head reads are also non-mutating. |
-| P2 Eden per-title status | In implementation | Dedicated client branch adds read-only desktop and Android views. It must pass native and Android builds before review. |
-| P2 OpenSave per-game status | In implementation | Dedicated desktop branch adds an API and Cloud tab status view for typed native scopes; conflicts block ordinary restore. |
-| P3 typed discovery | Partially delivered | Existing OpenSave selection preserves `pc`, `switch`, and `emulator-*`; remaining work is capability reporting and device-matrix verification. |
-| P4 operations and Bark | Partially delivered | Server has notification support. Release, restore, retention, and notification-failure drills remain required before an operational sign-off. |
-| P5 isolated regression matrix | Not started | Use disposable roots and profiles only. No Odin2, NAS, or sole live save participates in first validation. |
+| P2 Eden per-title status | Delivered in source | Desktop core build and Android release build pass; P5 validates the artifact on isolated test profiles. |
+| P2 OpenSave per-game status | Delivered in source | Typed native status and ordinary-restore conflict blocking are merged; P5 validates client behavior on disposable roots. |
+| P3 typed discovery | Delivered in source | `pc`, `switch`, and `emulator-*` remain isolated; Android now reports Root/SAF/unavailable access without treating it as an empty source. P5 validates physical devices. |
+| P4 operations and Bark | Delivered in automated coverage | Health, metrics, integrity, retention, asynchronous Bark, and failed-Bark upload isolation are merged. NAS upgrade/recovery drills remain P5 service rows. |
+| P5 isolated regression matrix | Checklist delivered | Use disposable roots and profiles only. No Odin2, NAS, or sole live save participates in first validation. Each physical-device row is pending evidence. |
 
 ### Release Rules
 
@@ -71,7 +71,7 @@ never permission to replace a NAS container, and an Android build is never permi
 
 ### P0: Contract And Release Baseline
 
-Status: in progress with this document.
+Status: delivered in source; release and deployment remain separate operations.
 
 - Publish the component responsibilities, immutable-save rules, compatibility matrix, and release gates.
 - Keep `game-save`, Eden, and OpenSave releases independently versioned. A client feature never implies an
@@ -98,7 +98,8 @@ cloud head unchanged and creates a conflict record.
 
 ### P2: Sync State And Conflict Visibility
 
-Status: in progress. `game-save v1.4.0` is the first delivery and `v1.4.1` hardens read-only behavior:
+Status: server and client source delivery is complete; the isolated P5 device matrix remains the release gate.
+`game-save v1.4.0` is the first delivery and `v1.4.1` hardens read-only behavior:
 `GET /v1/scopes/{id}/status`
 returns the CAS-authoritative head, all recoverable versions, retained conflicts, source device identity,
 and server receive times. It returns a successful empty state for a new scope and does not record a
@@ -120,10 +121,10 @@ alternative without inspecting server files or guessing from timestamps.
 
 - [x] `game-save`: publish typed CAS scope state and a read-only Eden status endpoint.
 - [x] `game-save`: ensure every native OpenSave read and Eden status read avoids device-heartbeat writes.
-- [ ] Eden: show title, local confirmed head, authoritative cloud head, source device, conflicts, pending
+- [x] Eden: show title, local confirmed head, authoritative cloud head, source device, conflicts, pending
   work, and recovery copies in a view that cannot upload, download, or restore.
-- [ ] OpenSave: expose the same fields per `{type}/{gameId}` through its local API and Cloud tab.
-- [ ] OpenSave: reject an ordinary restore while its native scope still has a retained conflict.
+- [x] OpenSave: expose the same fields per `{type}/{gameId}` through its local API and Cloud tab.
+- [x] OpenSave: reject an ordinary restore while its native scope still has a retained conflict.
 - [ ] Regression: prove an isolated two-device stale-write case keeps the original head and lists the
   divergent candidate as a conflict on both clients.
 
@@ -153,6 +154,9 @@ follow-up release; Eden consumes the generic read-only status endpoint introduce
 
 ### P3: Save Discovery And Typed Sources
 
+Status: source delivery is complete; Root/SAF and emulator discovery remain subject to P5 physical-device
+validation.
+
 - OpenSave filters selection and library views by `pc`, `switch`, and `emulator-<id>`; the type is persisted
   in native storage and shown in every backup/restore view.
 - Desktop discovery continues to use its existing save rules, with emulator roots selected separately rather
@@ -166,6 +170,9 @@ category, keep their icons/names where metadata is available, and upload to dist
 
 ### P4: Operations, Backup, And Upgrade Reliability
 
+Status: implementation and automated coverage are complete. A production NAS deployment, image upgrade, or
+recovery drill remains a separate P5 service operation against a disposable data directory.
+
 - Add health, integrity, storage, retention, and last-successful-sync signals to the dashboard.
 - Keep Bark notifications focused on actionable conflict, backup failure, integrity failure, and optionally
   successful upload events. A notification failure must never block save processing.
@@ -177,6 +184,10 @@ failure leaves a successful upload intact; an image upgrade is verified through 
 before any client is pointed at it.
 
 ### P5: Isolated End-To-End Regression Matrix
+
+Status: checklist delivered; physical-device execution is intentionally pending a disposable test
+profile/root. The exact fixture, expected CAS states, evidence rules, and stop conditions are in
+[`ISOLATED_REGRESSION_MATRIX.md`](ISOLATED_REGRESSION_MATRIX.md).
 
 - Windows: native OpenSave PC and emulator test directories, offline queue, normal shutdown, forced process
   exit, divergence, restore, and re-open checks.
