@@ -8,8 +8,8 @@ is the standalone successor to `eden-syncd`: the existing Eden protocol remains
 available, while OpenSave uses a separate, typed archive API. The service never
 interprets game-save contents.
 
-The next standalone release is `v1.3.0`; its matching image will be
-`jun9100/game-save:v1.3.0` for `linux/amd64` and `linux/arm64`.
+The next standalone release is `v1.4.0`; its matching image will be
+`jun9100/game-save:v1.4.0` for `linux/amd64` and `linux/arm64`.
 
 ## Client Protocols
 
@@ -18,6 +18,13 @@ The next standalone release is `v1.3.0`; its matching image will be
 Eden continues to use its existing authenticated `/v1` object and snapshot-head
 protocol. Existing Eden client URLs and sync keys do not need to change when an
 `eden-syncd` container is replaced by `game-save`.
+
+`GET /v1/scopes/{scope}/status` is a read-only status endpoint for newer Eden
+clients. It returns the CAS-authoritative head, every recoverable version,
+retained conflict copies, source device identity, and server receive times. A
+new scope returns an empty state with HTTP 200. The request neither records a
+device heartbeat nor changes save metadata; client-side state inspection must
+not trigger an upload, download, or restore.
 
 ### OpenSave Native API
 
@@ -173,7 +180,7 @@ fixed release tag rather than `latest`:
 docker compose -f compose.nas.yaml up -d
 ```
 
-`compose.nas.yaml` defaults to `jun9100/game-save:v1.3.0`, maps the service to
+`compose.nas.yaml` defaults to `jun9100/game-save:v1.4.0`, maps the service to
 port `8788`, and stores data at `/volume1/docker/game-save/data`. Set `PUID` and
 `PGID` to the owner of that directory. The generic default binds to loopback;
 choose the NAS private address only when the LAN firewall protects the port.
@@ -208,7 +215,7 @@ for any remote access.
 ```sh
 go test ./...
 go vet ./...
-docker build --build-arg VERSION=v1.3.0 -t game-save:v1.3.0 .
+docker build --build-arg VERSION=v1.4.0 -t game-save:v1.4.0 .
 ```
 
 The GitHub Actions release workflow publishes multi-architecture Docker Hub

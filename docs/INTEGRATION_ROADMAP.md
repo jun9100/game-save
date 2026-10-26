@@ -33,7 +33,7 @@ by the planned OpenSave synchronization flow.
 
 | Component | Baseline | Required behavior before shared-save use | Next release gate |
 | --- | --- | --- | --- |
-| `game-save` | `v1.3.0` | Eden protocol v2 is required for all Eden writes; OpenSave has immutable, typed CAS scopes. | P2 server release adds native scope head and conflict visibility. |
+| `game-save` | `v1.3.0` | Eden protocol v2 is required for all Eden writes; OpenSave has immutable, typed CAS scopes. | `v1.4.0` adds a read-only Eden scope-status API with head provenance and retained conflicts. |
 | Eden | `v2026.10.25-1` | Uses the v2 protocol, records confirmed content state, preserves restore copies, quarantines unsafe pending chains, and creates conflicts instead of overwriting a newer cloud head. | Add per-title sync-state visibility and isolated regression coverage. |
 | OpenSave desktop | `v2.4.5` | Uses the native provider, with PC/Switch/emulator namespaces isolated. | Add per-save sync status and a manifest-based restore/conflict contract. |
 | OpenSave Android | `0.3.15 (20)` | Supports selected Root and SAF roots, type filters, icons/names, and batch/automatic backups. | Add source-capability state, native sync status, and isolated device regression coverage. |
@@ -72,6 +72,12 @@ cloud head unchanged and creates a conflict record.
 
 ### P2: Sync State And Conflict Visibility
 
+Status: in progress. `game-save v1.4.0` is the first delivery: `GET /v1/scopes/{id}/status`
+returns the CAS-authoritative head, all recoverable versions, retained conflicts, source device identity,
+and server receive times. It returns a successful empty state for a new scope and does not record a
+heartbeat or modify any save metadata. `created_at` remains display metadata only; no client may use it
+to choose a winning version.
+
 - `game-save` dashboard exposes current head ID, content digest, source device, last confirmed sync, pending
   conflict copies, available recoverable versions, and verification result for each scope.
 - Eden displays per-title state: up to date, upload pending, download pending, conflict, offline/error, or
@@ -84,8 +90,8 @@ alternative without inspecting server files or guessing from timestamps.
 
 #### P2 Delivery Order And Native OpenSave Contract
 
-Status: `game-save` implementation is ready for the `v1.3.0` release; OpenSave and Eden consume the resulting
-state in their follow-up releases.
+Status: immutable typed OpenSave scopes shipped in `v1.3.0`. OpenSave consumes that protocol in its
+follow-up release; Eden consumes the generic read-only status endpoint introduced by `v1.4.0`.
 
 1. `game-save` stores each OpenSave archive immutably below its existing typed namespace. Retrying the same
    archive bytes is idempotent; a same-name upload with different bytes is rejected.

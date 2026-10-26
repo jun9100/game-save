@@ -30,7 +30,7 @@ const (
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
-var version = "v1.3.0-dev"
+var version = "v1.4.0-dev"
 
 type server struct {
 	dataDir          string
@@ -168,6 +168,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/blobs/{id}", s.requireToken(s.handlePutBlob))
 	mux.HandleFunc("GET /v1/blobs/{id}", s.requireToken(s.handleGetBlob))
 	mux.HandleFunc("GET /v1/scopes", s.requireToken(s.handleListScopes))
+	mux.HandleFunc("GET /v1/scopes/{id}/status", s.requireTokenReadOnly(s.handleGetScopeStatus))
 	mux.HandleFunc("GET /v1/scopes/{id}/head", s.requireToken(s.handleGetHead))
 	mux.HandleFunc("PUT /v1/scopes/{id}/snapshots/{snapshot}", s.requireToken(s.handlePutSnapshot))
 	mux.HandleFunc("PUT /v1/scopes/{id}/conflicts/{snapshot}", s.requireToken(s.handlePutConflictSnapshot))

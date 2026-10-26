@@ -47,16 +47,33 @@ func requireCurrentEdenSaveSyncProtocol(w http.ResponseWriter, r *http.Request) 
 
 func (s *server) requireToken(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		const prefix = "Bearer "
-		authorization := r.Header.Get("Authorization")
-		if !strings.HasPrefix(authorization, prefix) ||
-			subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(authorization, prefix)), []byte(s.token)) != 1 {
+		if !s.tokenAuthorized(r) {
 			writeError(w, http.StatusUnauthorized, "authentication required")
 			return
 		}
 		s.recordDevice(r)
 		next(w, r)
 	}
+}
+
+// requireTokenReadOnly authenticates a request without recording a device heartbeat. Status
+// inspection must not create activity records, mutate a scope, or make a failed read look like a
+// successful synchronization attempt.
+func (s *server) requireTokenReadOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.tokenAuthorized(r) {
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (s *server) tokenAuthorized(r *http.Request) bool {
+	const prefix = "Bearer "
+	authorization := r.Header.Get("Authorization")
+	return strings.HasPrefix(authorization, prefix) &&
+		subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(authorization, prefix)), []byte(s.token)) == 1
 }
 
 func requestDeviceID(r *http.Request) string {
@@ -268,6 +285,129 @@ func (s *server) handleGetHead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, storedScope.Snapshots[storedScope.Head].snapshot)
+}
+
+// scopeStatusDevice deliberately excludes the recorded network address and client version. The
+// client only needs an identifiable source device for conflict resolution, not administrative
+// inventory details.
+type scopeStatusDevice struct {
+	ID       string `json:"id"`
+	Name     string `json:"name,omitempty"`
+	Platform string `json:"platform,omitempty"`
+}
+
+// scopeStatusSnapshot is the read-only, audit-friendly representation of an Eden snapshot. The
+// server-selected head is authoritative because it was advanced with CAS; created_at is retained
+// for display only and must not be used to select a winner.
+type scopeStatusSnapshot struct {
+	ID         string             `json:"id"`
+	Blob       string             `json:"blob"`
+	Parent     string             `json:"parent"`
+	CreatedAt  time.Time          `json:"created_at"`
+	ReceivedAt time.Time          `json:"received_at,omitzero"`
+	Size       int64              `json:"size"`
+	Device     *scopeStatusDevice `json:"device,omitempty"`
+	Conflict   bool               `json:"conflict,omitempty"`
+	ConflictOf string             `json:"conflict_of,omitempty"`
+	RestoredOf string             `json:"restored_of,omitempty"`
+}
+
+type scopeStatusResponse struct {
+	Scope             string                `json:"scope"`
+	Title             string                `json:"title,omitempty"`
+	UserName          string                `json:"user_name,omitempty"`
+	Head              *scopeStatusSnapshot  `json:"head"`
+	Snapshots         []scopeStatusSnapshot `json:"snapshots"`
+	Conflicts         []scopeStatusSnapshot `json:"conflicts"`
+	SnapshotCount     int                   `json:"snapshot_count"`
+	ConflictCount     int                   `json:"conflict_count"`
+	HeadObjectPresent bool                  `json:"head_object_present"`
+}
+
+func scopeStatusDeviceFor(deviceID string, devices map[string]deviceInfo) *scopeStatusDevice {
+	if deviceID == "" {
+		return nil
+	}
+	device := devices[deviceID]
+	name := device.Name
+	if device.Alias != "" {
+		name = device.Alias
+	}
+	return &scopeStatusDevice{ID: deviceID, Name: name, Platform: device.Platform}
+}
+
+func scopeStatusSnapshotFor(record snapshotRecord, devices map[string]deviceInfo) scopeStatusSnapshot {
+	return scopeStatusSnapshot{
+		ID:         record.ID,
+		Blob:       record.Blob,
+		Parent:     record.Parent,
+		CreatedAt:  record.CreatedAt,
+		ReceivedAt: record.ReceivedAt,
+		Size:       record.Size,
+		Device:     scopeStatusDeviceFor(record.Device, devices),
+		Conflict:   record.Conflict,
+		ConflictOf: record.ConflictOf,
+		RestoredOf: record.RestoredOf,
+	}
+}
+
+func sortScopeStatusSnapshots(snapshots []scopeStatusSnapshot) {
+	sort.Slice(snapshots, func(left, right int) bool {
+		if !snapshots[left].ReceivedAt.Equal(snapshots[right].ReceivedAt) {
+			return snapshots[left].ReceivedAt.After(snapshots[right].ReceivedAt)
+		}
+		return snapshots[left].ID > snapshots[right].ID
+	})
+}
+
+// handleGetScopeStatus returns all recoverable versions and retained conflicts for one Eden
+// scope. Unknown scopes intentionally return a successful empty state so a new client can detect
+// support without mistaking its first backup for a legacy-server failure.
+func (s *server) handleGetScopeStatus(w http.ResponseWriter, r *http.Request) {
+	scopeID := r.PathValue("id")
+	if !validScopeID(scopeID) {
+		writeError(w, http.StatusBadRequest, "invalid scope id")
+		return
+	}
+
+	response := scopeStatusResponse{
+		Scope:     scopeID,
+		Snapshots: []scopeStatusSnapshot{},
+		Conflicts: []scopeStatusSnapshot{},
+	}
+	var headBlob string
+	s.mu.Lock()
+	if stored, exists := s.state.Scopes[scopeID]; exists {
+		metadata := s.dashboard.Scopes[scopeID]
+		response.Title = metadata.Title
+		response.UserName = metadata.UserName
+		for _, record := range stored.Snapshots {
+			item := scopeStatusSnapshotFor(record, s.dashboard.Devices)
+			response.Snapshots = append(response.Snapshots, item)
+			response.SnapshotCount++
+			if item.Conflict {
+				response.Conflicts = append(response.Conflicts, item)
+				response.ConflictCount++
+			}
+		}
+		if stored.Head != "" {
+			if record, found := stored.Snapshots[stored.Head]; found {
+				head := scopeStatusSnapshotFor(record, s.dashboard.Devices)
+				response.Head = &head
+				headBlob = head.Blob
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	sortScopeStatusSnapshots(response.Snapshots)
+	sortScopeStatusSnapshots(response.Conflicts)
+	if headBlob != "" {
+		if info, err := os.Stat(s.objectPath(headBlob)); err == nil && !info.IsDir() {
+			response.HeadObjectPresent = true
+		}
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func decodeSnapshotCandidate(w http.ResponseWriter, r *http.Request, snapshotID string) (snapshot, bool) {

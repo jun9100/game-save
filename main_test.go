@@ -856,6 +856,106 @@ func TestSnapshotRecordsUploaderAndSize(t *testing.T) {
 	}
 }
 
+func TestScopeStatusIsReadOnlyAndListsAuthoritativeHeadAndConflicts(t *testing.T) {
+	s, httpServer := newTestServer(t)
+	defer httpServer.Close()
+	s.mu.Lock()
+	s.dashboard.Scopes["scope-1"] = scopeMetadata{Title: "Isolated Test Title", UserName: "Test User"}
+	s.mu.Unlock()
+
+	now := time.Now().UTC().Add(-time.Minute)
+	headBlob := putObject(t, httpServer.URL, []byte("authoritative cloud head"))
+	if status := commitSnapshot(t, httpServer.URL, "scope-1",
+		snapshot{ID: "head-1", Blob: headBlob, CreatedAt: now}, "", "desktop-1"); status != http.StatusCreated {
+		t.Fatalf("commit head status = %d", status)
+	}
+	conflictBlob := putObject(t, httpServer.URL, []byte("divergent mobile progress"))
+	conflict := snapshot{
+		ID:        "conflict-1",
+		Blob:      conflictBlob,
+		Parent:    "unverified-parent",
+		CreatedAt: now.Add(time.Hour),
+	}
+	payload, err := json.Marshal(conflict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := authorizedRequest(t, http.MethodPut,
+		httpServer.URL+"/v1/scopes/scope-1/conflicts/"+conflict.ID, payload)
+	request.Header.Set("X-Eden-Device-ID", "odin2-1")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("retain conflict status = %d", response.StatusCode)
+	}
+
+	s.mu.Lock()
+	devicesBefore := len(s.dashboard.Devices)
+	lastSeen := s.dashboard.Devices["desktop-1"].LastSeen
+	s.mu.Unlock()
+	request = authorizedRequest(t, http.MethodGet, httpServer.URL+"/v1/scopes/scope-1/status", nil)
+	request.Header.Set("X-Eden-Device-ID", "read-only-client")
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status response = %d", response.StatusCode)
+	}
+	var status scopeStatusResponse
+	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Scope != "scope-1" || status.Title != "Isolated Test Title" ||
+		status.UserName != "Test User" || status.Head == nil || status.Head.ID != "head-1" ||
+		status.Head.Blob != headBlob || status.Head.Device == nil || status.Head.Device.ID != "desktop-1" ||
+		!status.HeadObjectPresent {
+		t.Fatalf("unexpected status head: %+v", status)
+	}
+	if status.SnapshotCount != 2 || status.ConflictCount != 1 || len(status.Snapshots) != 2 ||
+		len(status.Conflicts) != 1 || status.Conflicts[0].ID != "conflict-1" ||
+		!status.Conflicts[0].Conflict || status.Conflicts[0].ConflictOf != "head-1" {
+		t.Fatalf("unexpected recoverable versions: %+v", status)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.dashboard.Devices) != devicesBefore || !s.dashboard.Devices["desktop-1"].LastSeen.Equal(lastSeen) {
+		t.Fatalf("read-only status request changed device state: %+v", s.dashboard.Devices)
+	}
+	if _, exists := s.dashboard.Devices["read-only-client"]; exists {
+		t.Fatalf("read-only status request recorded a device: %+v", s.dashboard.Devices)
+	}
+}
+
+func TestScopeStatusReturnsEmptyStateForNewScope(t *testing.T) {
+	_, httpServer := newTestServer(t)
+	defer httpServer.Close()
+
+	response, err := http.DefaultClient.Do(authorizedRequest(t, http.MethodGet,
+		httpServer.URL+"/v1/scopes/new-scope/status", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("empty status response = %d", response.StatusCode)
+	}
+	var status scopeStatusResponse
+	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status.Scope != "new-scope" || status.Head != nil || status.SnapshotCount != 0 ||
+		status.ConflictCount != 0 || len(status.Snapshots) != 0 || len(status.Conflicts) != 0 ||
+		status.HeadObjectPresent {
+		t.Fatalf("unexpected empty status: %+v", status)
+	}
+}
+
 func TestRollbackCreatesNewHeadReferencingOldObject(t *testing.T) {
 	_, httpServer := newAdminTestServer(t, t.TempDir())
 	defer httpServer.Close()
