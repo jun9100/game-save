@@ -13,6 +13,9 @@ const store = {
   overview: null,
   scopeDetail: null,
   events: null,
+  openSaveFiles: null,
+  openSaveQuery: "",
+  openSaveType: "all",
   savesQuery: "",
   savesSort: "recent",
   savesFilter: "all",
@@ -187,6 +190,7 @@ async function loadOverview() {
   store.overview = await api(`overview${query}`);
   $("#brand-version").textContent = store.overview.server.version;
   $("#nav-saves").textContent = store.overview.stats.scopes || "";
+  $("#nav-opensave").textContent = store.overview.stats.opensave_files || "";
   $("#nav-devices").textContent = store.overview.stats.devices
     ? `${store.overview.stats.online_devices}/${store.overview.stats.devices}` : "";
 }
@@ -322,6 +326,9 @@ function renderOverview() {
       <div class="card kpi"><span class="label"><span class="dot ${stats.online_devices ? "on" : ""}"></span>在线设备</span>
         <span class="value">${stats.online_devices}<small class="sub"> / ${stats.devices}</small></span>
         <span class="sub">${onlineDevices.length ? esc(onlineDevices.slice(0, 2).map((d) => d.alias || d.name || "未命名").join("、")) : "暂无设备在线"}</span></div>
+      <a class="card kpi kpi-link" href="#/opensave"><span class="label">OpenSave 归档</span>
+        <span class="value">${stats.opensave_files}</span>
+        <span class="sub">${formatBytes(stats.opensave_bytes)} · 按 PC、Switch、模拟器隔离</span></a>
       ${server.disk_total ? `<div class="card kpi"><span class="label">数据卷</span>
         <span class="value">${formatBytes(server.disk_free)}</span>
         <span class="sub">可用 · 共 ${formatBytes(server.disk_total)}</span>
@@ -461,6 +468,74 @@ function saveCard(scope) {
       <div><span>快照</span><b>${scope.snapshot_count}${scope.pinned_count ? ` · ${icon("pin")}${scope.pinned_count}` : ""}</b></div>
       <div><span>占用</span><b>${formatBytes(scope.stored_bytes)}</b></div>
     </div></a>`;
+}
+
+function openSaveTypeLabel(type) {
+  if (type === "pc") return "PC 游戏";
+  if (type === "switch") return "Switch";
+  if (String(type).startsWith("emulator-")) return `模拟器 · ${String(type).slice("emulator-".length)}`;
+  return type || "未分类";
+}
+
+function openSaveSource(file) {
+  if (file.deviceName) return file.deviceName;
+  if (file.device) return deviceName(file.device);
+  return "旧归档（无来源记录）";
+}
+
+function openSaveRow(file) {
+  const timestamp = file.uploadedAt || file.createdTime;
+  const hash = file.sha256 ? shortID(file.sha256, 16) : "旧归档未记录校验值";
+  return `<div class="opensave-row">
+    <div class="opensave-file"><strong title="${esc(file.name)}">${esc(file.name)}</strong>
+      <span class="meta">${esc(openSaveSource(file))} · ${esc(absTime(timestamp))}</span></div>
+    <span class="badge accent">${esc(openSaveTypeLabel(file.type))}</span>
+    <span class="mono opensave-size">${formatBytes(file.sizeBytes)}</span>
+    <code class="opensave-hash" title="${esc(file.sha256 || "")}">${esc(hash)}</code>
+  </div>`;
+}
+
+async function renderOpenSave() {
+  if (!store.openSaveFiles) {
+    main.innerHTML = `<div class="skeleton"></div>`;
+    const response = await api("opensave/files");
+    store.openSaveFiles = response.files || [];
+    if (currentRoute().name !== "opensave") return;
+  }
+  const files = store.openSaveFiles;
+  const types = [...new Set(files.map((file) => file.type).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const query = store.openSaveQuery.trim().toLowerCase();
+  const visible = files.filter((file) => {
+    if (store.openSaveType !== "all" && file.type !== store.openSaveType) return false;
+    return !query || file.name.toLowerCase().includes(query) || openSaveSource(file).toLowerCase().includes(query);
+  });
+  visible.sort((left, right) => new Date(right.uploadedAt || right.createdTime) - new Date(left.uploadedAt || left.createdTime));
+
+  main.innerHTML = `
+    ${pageHead("OpenSave 归档", `${files.length} 个原生归档 · 只读审计视图，不会删除或恢复任何存档`)}
+    <div class="toolbar">
+      <label class="search">${icon("search")}<input type="search" id="opensave-search" placeholder="搜索归档或来源设备" value="${esc(store.openSaveQuery)}"></label>
+      <select id="opensave-type" aria-label="归档类型"><option value="all">全部类型</option>
+        ${types.map((type) => `<option value="${esc(type)}">${esc(openSaveTypeLabel(type))}</option>`).join("")}</select>
+    </div>
+    <section class="card opensave-list">
+      <div class="card-head"><h2>云端归档</h2><span class="hint">SHA-256 由服务端接收归档时计算；旧归档保留原有可读性，但可能没有审计字段。</span></div>
+      <div class="card-body">${visible.length ? visible.map(openSaveRow).join("")
+        : emptyState(files.length ? "没有匹配的归档" : "还没有 OpenSave 归档", files.length ? "尝试其他关键词或类型筛选。" : "OpenSave 客户端完成一次原生 game-save 备份后会显示在这里。")}</div>
+    </section>`;
+
+  const typeSelect = $("#opensave-type");
+  typeSelect.value = store.openSaveType;
+  typeSelect.onchange = (event) => { store.openSaveType = event.target.value; renderOpenSave(); };
+  const search = $("#opensave-search");
+  search.oninput = () => {
+    store.openSaveQuery = search.value;
+    const position = search.selectionStart;
+    renderOpenSave();
+    const next = $("#opensave-search");
+    next.focus();
+    next.setSelectionRange(position, position);
+  };
 }
 
 async function renderScope(id) {
@@ -728,7 +803,7 @@ function currentRoute() {
   const hash = location.hash.replace(/^#\/?/, "");
   const [name, id] = hash.split("/");
   if (name === "saves" && id) return { name: "scope", id: decodeURIComponent(id), nav: "saves" };
-  const known = ["saves", "devices", "activity", "maintenance"];
+  const known = ["saves", "opensave", "devices", "activity", "maintenance"];
   return { name: known.includes(name) ? name : "overview", nav: known.includes(name) ? name : "overview" };
 }
 
@@ -736,11 +811,12 @@ async function render() {
   const route = currentRoute();
   document.querySelectorAll("#nav a").forEach((link) =>
     link.classList.toggle("active", link.dataset.route === route.nav));
-  const titles = { overview: "概览", saves: "存档", scope: "存档", devices: "设备", activity: "活动", maintenance: "维护" };
+  const titles = { overview: "概览", saves: "存档", scope: "存档", opensave: "OpenSave", devices: "设备", activity: "活动", maintenance: "维护" };
   document.title = `${titles[route.name]} · Game Save`;
   switch (route.name) {
     case "saves": return renderSaves();
     case "scope": return renderScope(route.id);
+    case "opensave": return renderOpenSave();
     case "devices": return renderDevices();
     case "activity": return renderActivity();
     case "maintenance": return renderMaintenance();
@@ -753,6 +829,7 @@ async function refresh({ quiet = false } = {}) {
   if (refreshing) return;
   refreshing = true;
   try {
+    store.openSaveFiles = null;
     await loadOverview();
     const route = currentRoute();
     // Avoid wiping half-typed form input during background refreshes.

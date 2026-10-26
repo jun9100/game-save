@@ -64,7 +64,10 @@ Basic Auth. Set both `GAME_SAVE_OPENSAVE_USERNAME` and
 
 The persistent data directory contains `objects/`, `state.json`,
 `dashboard.json`, `settings.json`, `events.json`, `opensave/`, and (after a
-native OpenSave upload) `opensave-native/`. Back up the entire directory.
+native OpenSave upload) `opensave-native/` plus `opensave-native.json`. The
+JSON catalog contains audit metadata such as an archive checksum, upload time,
+and source device; it never contains save contents. Back up the entire
+directory.
 
 ## Configuration
 

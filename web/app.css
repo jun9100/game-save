@@ -203,6 +203,8 @@ input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
 .kpi .label { color: var(--muted); font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .kpi .value { font-size: 26px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .kpi .sub { color: var(--muted); font-size: 12px; }
+.kpi-link { color: inherit; }
+.kpi-link:hover { border-color: var(--border-strong); box-shadow: var(--shadow-lg); }
 .meter { height: 6px; border-radius: 99px; background: var(--surface-3); overflow: hidden; margin-top: 6px; }
 .meter > i { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
 .meter.warn > i { background: var(--warn); }
@@ -261,6 +263,16 @@ a.row:hover .title { color: var(--accent-text); }
 .chip { height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border-strong);
   background: var(--surface); cursor: pointer; font-size: 13px; font-weight: 550; color: var(--text-2); }
 .chip.active { background: var(--text); color: var(--bg); border-color: var(--text); }
+
+/* Native OpenSave archive audit */
+.opensave-list { overflow: hidden; }
+.opensave-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, auto) 78px minmax(120px, auto); gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--border); }
+.opensave-row:first-child { border-top: 0; }
+.opensave-file { min-width: 0; display: grid; gap: 3px; }
+.opensave-file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.opensave-file .meta { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opensave-size { color: var(--muted); text-align: right; font-size: 12px; white-space: nowrap; }
+.opensave-hash { color: var(--muted); font-size: 11px; text-align: right; white-space: nowrap; }
 
 /* Save grid */
 .saves { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
@@ -421,6 +433,9 @@ pre.snippet { margin: 0; padding: 12px 14px; background: var(--surface-2); borde
   .snap { grid-template-columns: 22px minmax(0, 1fr); }
   .snap-actions { grid-column: 2; }
   .toolbar select { flex: 1; }
+  .opensave-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .opensave-size, .opensave-hash { text-align: left; }
+  .opensave-hash { grid-column: 1 / -1; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

@@ -4,8 +4,11 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,6 +25,32 @@ type openSaveFile struct {
 	Name        string    `json:"name"`
 	SizeBytes   int64     `json:"sizeBytes"`
 	CreatedTime time.Time `json:"createdTime"`
+	SHA256      string    `json:"sha256,omitempty"`
+	Device      string    `json:"device,omitempty"`
+	DeviceName  string    `json:"deviceName,omitempty"`
+	UploadedAt  time.Time `json:"uploadedAt,omitzero"`
+}
+
+// openSaveCatalog records only transport-level metadata for native OpenSave
+// archives. Save contents remain opaque to game-save; the checksum lets an
+// administrator audit which exact archive a client uploaded without opening it.
+type openSaveCatalog struct {
+	Files map[string]openSaveFileMetadata `json:"files"`
+}
+
+type openSaveFileMetadata struct {
+	SHA256     string    `json:"sha256,omitempty"`
+	Device     string    `json:"device,omitempty"`
+	DeviceName string    `json:"device_name,omitempty"`
+	UploadedAt time.Time `json:"uploaded_at,omitzero"`
+}
+
+func (c openSaveCatalog) clone() openSaveCatalog {
+	next := openSaveCatalog{Files: make(map[string]openSaveFileMetadata, len(c.Files)+1)}
+	for key, value := range c.Files {
+		next.Files[key] = value
+	}
+	return next
 }
 
 func validOpenSaveType(value string) bool {
@@ -39,6 +68,28 @@ func (s *server) openSaveNativeDirectory() string {
 	return filepath.Join(s.dataDir, "opensave-native")
 }
 
+func (s *server) openSaveCatalogPath() string {
+	return filepath.Join(s.dataDir, "opensave-native.json")
+}
+
+func openSaveCatalogKey(kind, name string) string {
+	return kind + "\x00" + name
+}
+
+func (s *server) loadOpenSaveCatalog() error {
+	if err := readJSONFile(s.openSaveCatalogPath(), &s.openSaveCatalog); err != nil {
+		return err
+	}
+	if s.openSaveCatalog.Files == nil {
+		s.openSaveCatalog.Files = make(map[string]openSaveFileMetadata)
+	}
+	return nil
+}
+
+func (s *server) persistOpenSaveCatalog(catalog openSaveCatalog) error {
+	return writeJSONFile(s.openSaveCatalogPath(), catalog)
+}
+
 func (s *server) openSavePath(kind, name string) (string, bool) {
 	if !validOpenSaveType(kind) || !validOpenSaveName(name) {
 		return "", false
@@ -47,6 +98,19 @@ func (s *server) openSavePath(kind, name string) (string, bool) {
 }
 
 func (s *server) handleOpenSaveList(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"files": s.listOpenSaveFiles()})
+}
+
+// listOpenSaveFiles returns only files currently present on disk. A manually
+// removed archive therefore never remains visible because of stale catalog
+// metadata, while older archives pre-dating the catalog remain listable.
+func (s *server) listOpenSaveFiles() []openSaveFile {
+	s.openSaveMu.Lock()
+	defer s.openSaveMu.Unlock()
+	return s.listOpenSaveFilesLocked()
+}
+
+func (s *server) listOpenSaveFilesLocked() []openSaveFile {
 	root := s.openSaveNativeDirectory()
 	entries := []openSaveFile{}
 	for _, kind := range []string{"pc", "switch"} {
@@ -66,7 +130,7 @@ func (s *server) handleOpenSaveList(w http.ResponseWriter, _ *http.Request) {
 		}
 		return entries[i].Name < entries[j].Name
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"files": entries})
+	return entries
 }
 
 func (s *server) openSaveFilesForType(root, kind string) []openSaveFile {
@@ -81,7 +145,14 @@ func (s *server) openSaveFilesForType(root, kind string) []openSaveFile {
 			continue
 		}
 		if info, err := item.Info(); err == nil {
-			files = append(files, openSaveFile{Type: kind, Name: item.Name(), SizeBytes: info.Size(), CreatedTime: info.ModTime().UTC()})
+			file := openSaveFile{Type: kind, Name: item.Name(), SizeBytes: info.Size(), CreatedTime: info.ModTime().UTC()}
+			if metadata, ok := s.openSaveCatalog.Files[openSaveCatalogKey(kind, item.Name())]; ok {
+				file.SHA256 = metadata.SHA256
+				file.Device = metadata.Device
+				file.DeviceName = metadata.DeviceName
+				file.UploadedAt = metadata.UploadedAt
+			}
+			files = append(files, file)
 		}
 	}
 	return files
@@ -105,7 +176,8 @@ func (s *server) handleOpenSaveNativePut(w http.ResponseWriter, r *http.Request)
 	}
 	temporaryPath := temporary.Name()
 	defer func() { _ = os.Remove(temporaryPath) }()
-	written, copyErr := io.Copy(temporary, http.MaxBytesReader(w, r.Body, s.maxObjectBytes+1))
+	hash := sha256.New()
+	written, copyErr := io.Copy(io.MultiWriter(temporary, hash), http.MaxBytesReader(w, r.Body, s.maxObjectBytes+1))
 	if copyErr == nil {
 		copyErr = temporary.Sync()
 	}
@@ -116,9 +188,27 @@ func (s *server) handleOpenSaveNativePut(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusRequestEntityTooLarge, "OpenSave archive exceeds configured size limit")
 		return
 	}
+	s.openSaveMu.Lock()
+	defer s.openSaveMu.Unlock()
 	if err := os.Rename(temporaryPath, destination); err != nil {
 		writeError(w, http.StatusInternalServerError, "cannot publish OpenSave archive")
 		return
+	}
+
+	metadata := openSaveFileMetadata{
+		SHA256:     hex.EncodeToString(hash.Sum(nil)),
+		Device:     requestDeviceID(r),
+		DeviceName: trimDeviceField(requestClientHeader(r, "X-Eden-Device-Name", "X-OpenSave-Device-Name"), 80),
+		UploadedAt: time.Now().UTC(),
+	}
+	next := s.openSaveCatalog.clone()
+	next.Files[openSaveCatalogKey(kind, name)] = metadata
+	if err := s.persistOpenSaveCatalog(next); err != nil {
+		// The archive itself is safely published. Do not turn a completed backup
+		// into a client failure just because its advisory audit record is delayed.
+		slog.Warn("persist OpenSave archive metadata", "type", kind, "name", name, "error", err)
+	} else {
+		s.openSaveCatalog = next
 	}
 	w.WriteHeader(http.StatusCreated)
 }
@@ -150,16 +240,26 @@ func (s *server) handleOpenSaveNativeGet(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *server) handleOpenSaveNativeDelete(w http.ResponseWriter, r *http.Request) {
-	path, ok := s.openSavePath(r.PathValue("type"), r.PathValue("name"))
+	kind, name := r.PathValue("type"), r.PathValue("name")
+	path, ok := s.openSavePath(kind, name)
 	if !ok {
 		writeError(w, http.StatusBadRequest, "invalid OpenSave type or file name")
 		return
 	}
+	s.openSaveMu.Lock()
+	defer s.openSaveMu.Unlock()
 	if err := os.Remove(path); errors.Is(err, os.ErrNotExist) {
 		writeError(w, http.StatusNotFound, "OpenSave archive not found")
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "cannot delete OpenSave archive")
 	} else {
+		next := s.openSaveCatalog.clone()
+		delete(next.Files, openSaveCatalogKey(kind, name))
+		if err := s.persistOpenSaveCatalog(next); err != nil {
+			slog.Warn("persist OpenSave archive deletion", "type", kind, "name", name, "error", err)
+		} else {
+			s.openSaveCatalog = next
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
