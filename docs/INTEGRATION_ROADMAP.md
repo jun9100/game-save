@@ -76,7 +76,8 @@ Status: in progress. `game-save v1.4.0` is the first delivery: `GET /v1/scopes/{
 returns the CAS-authoritative head, all recoverable versions, retained conflicts, source device identity,
 and server receive times. It returns a successful empty state for a new scope and does not record a
 heartbeat or modify any save metadata. `created_at` remains display metadata only; no client may use it
-to choose a winning version.
+to choose a winning version. `v1.4.1` applies the same no-heartbeat rule to OpenSave's native archive,
+scope, and head reads.
 
 - `game-save` dashboard exposes current head ID, content digest, source device, last confirmed sync, pending
   conflict copies, available recoverable versions, and verification result for each scope.

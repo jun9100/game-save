@@ -8,8 +8,8 @@ is the standalone successor to `eden-syncd`: the existing Eden protocol remains
 available, while OpenSave uses a separate, typed archive API. The service never
 interprets game-save contents.
 
-The next standalone release is `v1.4.0`; its matching image will be
-`jun9100/game-save:v1.4.0` for `linux/amd64` and `linux/arm64`.
+The next standalone release is `v1.4.1`; its matching image will be
+`jun9100/game-save:v1.4.1` for `linux/amd64` and `linux/arm64`.
 
 ## Client Protocols
 
@@ -58,6 +58,9 @@ head only through the snapshot endpoint with an `If-Match` header for its
 confirmed parent. A rejected branch is sent to the conflict endpoint and
 remains recoverable without changing the head. A matching OpenSave client build
 is required before selecting this provider.
+
+Native OpenSave `GET` operations are authenticated but read-only: listing
+archives or checking a typed scope/head never writes a device heartbeat.
 
 ### OpenSave WebDAV Compatibility
 
@@ -180,7 +183,7 @@ fixed release tag rather than `latest`:
 docker compose -f compose.nas.yaml up -d
 ```
 
-`compose.nas.yaml` defaults to `jun9100/game-save:v1.4.0`, maps the service to
+`compose.nas.yaml` defaults to `jun9100/game-save:v1.4.1`, maps the service to
 port `8788`, and stores data at `/volume1/docker/game-save/data`. Set `PUID` and
 `PGID` to the owner of that directory. The generic default binds to loopback;
 choose the NAS private address only when the LAN firewall protects the port.
@@ -215,7 +218,7 @@ for any remote access.
 ```sh
 go test ./...
 go vet ./...
-docker build --build-arg VERSION=v1.4.0 -t game-save:v1.4.0 .
+docker build --build-arg VERSION=v1.4.1 -t game-save:v1.4.1 .
 ```
 
 The GitHub Actions release workflow publishes multi-architecture Docker Hub

@@ -237,6 +237,59 @@ func TestOpenSaveScopesUseCASRetainConflictsAndPersist(t *testing.T) {
 	}
 }
 
+func TestOpenSaveNativeReadsDoNotRecordDeviceHeartbeat(t *testing.T) {
+	s, err := newServer(t.TempDir(), testToken, 1024*1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpServer := httptest.NewServer(s.handler())
+	defer httpServer.Close()
+
+	const archiveName = "read-only-game__main__snapshot-1.zip"
+	const archiveBody = "test save"
+	if status := putOpenSaveScopeArchive(t, httpServer.URL, "pc", archiveName, []byte(archiveBody)); status != http.StatusCreated {
+		t.Fatalf("archive upload status = %d", status)
+	}
+	candidate := openSaveScopeCandidateFor("snapshot-1", archiveName, "", []byte(archiveBody), time.Now())
+	response, body := putOpenSaveScopeCandidate(t, httpServer.URL,
+		"/v1/opensave/scopes/pc/read-only-game/snapshots/"+candidate.ID, "", candidate)
+	response.Body.Close()
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("scope upload status = %d: %s", response.StatusCode, body)
+	}
+
+	s.mu.Lock()
+	devicesBefore := len(s.dashboard.Devices)
+	lastSeen := s.dashboard.Devices["desktop-1"].LastSeen
+	s.mu.Unlock()
+	for _, path := range []string{
+		"/v1/opensave/files",
+		"/v1/opensave/files/pc/" + archiveName,
+		"/v1/opensave/scopes/pc/read-only-game",
+		"/v1/opensave/scopes/pc/read-only-game/head",
+	} {
+		request := openSaveScopeRequest(t, http.MethodGet, httpServer.URL+path, nil)
+		request.Header.Set("X-OpenSave-Device-ID", "read-only-client")
+		response, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("read %s status = %d", path, response.StatusCode)
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.dashboard.Devices) != devicesBefore || !s.dashboard.Devices["desktop-1"].LastSeen.Equal(lastSeen) {
+		t.Fatalf("read-only requests changed device state: %+v", s.dashboard.Devices)
+	}
+	if _, exists := s.dashboard.Devices["read-only-client"]; exists {
+		t.Fatalf("read-only requests recorded a device: %+v", s.dashboard.Devices)
+	}
+}
+
 func TestOpenSaveArchivesAreImmutableAndTypesAreIsolated(t *testing.T) {
 	s, err := newServer(t.TempDir(), testToken, 1024*1024)
 	if err != nil {
