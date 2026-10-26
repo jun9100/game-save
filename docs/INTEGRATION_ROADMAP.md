@@ -33,13 +33,39 @@ by the planned OpenSave synchronization flow.
 
 | Component | Baseline | Required behavior before shared-save use | Next release gate |
 | --- | --- | --- | --- |
-| `game-save` | `v1.3.0` | Eden protocol v2 is required for all Eden writes; OpenSave has immutable, typed CAS scopes. | `v1.4.0` adds a read-only Eden scope-status API with head provenance and retained conflicts. |
+| `game-save` | `v1.4.1` | Eden protocol v2 is required for all Eden writes; OpenSave has immutable typed CAS scopes and both Eden/OpenSave scope reads are read-only. | P4 operational evidence: image publication, backup/restore drill, and notification failure isolation. |
 | Eden | `v2026.10.25-1` | Uses the v2 protocol, records confirmed content state, preserves restore copies, quarantines unsafe pending chains, and creates conflicts instead of overwriting a newer cloud head. | Add per-title sync-state visibility and isolated regression coverage. |
 | OpenSave desktop | `v2.4.5` | Uses the native provider, with PC/Switch/emulator namespaces isolated. | Add per-save sync status and a manifest-based restore/conflict contract. |
-| OpenSave Android | `0.3.15 (20)` | Supports selected Root and SAF roots, type filters, icons/names, and batch/automatic backups. | Add source-capability state, native sync status, and isolated device regression coverage. |
+| OpenSave Android | `0.3.15 (20)` | Supports selected Root and SAF roots, type filters, icons/names, and batch/automatic backups. | Add source-capability state, native sync status, and isolated device regression coverage. Android artifacts remain CI-only until the P5 device matrix passes. |
 
 Older Eden clients remain readable but are intentionally unable to write to a v2 `game-save` service. All
 devices sharing an Eden save must be upgraded before they are used interchangeably.
+
+## Current Delivery Ledger
+
+This ledger records delivery state, not an automatic deployment instruction. A released server image is
+never permission to replace a NAS container, and an Android build is never permission to touch a live save.
+
+| Work item | State | Evidence / next gate |
+| --- | --- | --- |
+| P1 server lineage, conflict retention, and recovery protection | Delivered | `game-save` protocol-v2 writes and immutable conflict copies are in released server code. |
+| P2 server read-only status | Delivered | `game-save v1.4.1` returns Eden scope state without heartbeats; native OpenSave archive, scope, and head reads are also non-mutating. |
+| P2 Eden per-title status | In implementation | Dedicated client branch adds read-only desktop and Android views. It must pass native and Android builds before review. |
+| P2 OpenSave per-game status | In implementation | Dedicated desktop branch adds an API and Cloud tab status view for typed native scopes; conflicts block ordinary restore. |
+| P3 typed discovery | Partially delivered | Existing OpenSave selection preserves `pc`, `switch`, and `emulator-*`; remaining work is capability reporting and device-matrix verification. |
+| P4 operations and Bark | Partially delivered | Server has notification support. Release, restore, retention, and notification-failure drills remain required before an operational sign-off. |
+| P5 isolated regression matrix | Not started | Use disposable roots and profiles only. No Odin2, NAS, or sole live save participates in first validation. |
+
+### Release Rules
+
+1. `game-save` releases publish a versioned image, release notes, and a rollback-ready data-directory
+   checklist. Updating a running NAS container remains a separate, explicit operation.
+2. OpenSave release automation currently produces Windows artifacts only. Android may compile and run unit
+   checks in CI, but no APK is published or installed until the Android P5 rows have passed.
+3. Eden desktop and Android builds are reviewed separately. A native C++ or Android build environment
+   failure blocks the corresponding artifact; it does not weaken the no-overwrite rule.
+4. Every client release includes its protocol fallback boundary: native typed scopes may fall back only on
+   a route-level `404`, never after authentication, integrity, or CAS failure.
 
 ## Delivery Phases
 
@@ -72,7 +98,8 @@ cloud head unchanged and creates a conflict record.
 
 ### P2: Sync State And Conflict Visibility
 
-Status: in progress. `game-save v1.4.0` is the first delivery: `GET /v1/scopes/{id}/status`
+Status: in progress. `game-save v1.4.0` is the first delivery and `v1.4.1` hardens read-only behavior:
+`GET /v1/scopes/{id}/status`
 returns the CAS-authoritative head, all recoverable versions, retained conflicts, source device identity,
 and server receive times. It returns a successful empty state for a new scope and does not record a
 heartbeat or modify any save metadata. `created_at` remains display metadata only; no client may use it
@@ -88,6 +115,17 @@ scope, and head reads.
 
 Acceptance: a tester can identify the authoritative cloud head, its device source, and every recoverable
 alternative without inspecting server files or guessing from timestamps.
+
+#### P2 Completion Checklist
+
+- [x] `game-save`: publish typed CAS scope state and a read-only Eden status endpoint.
+- [x] `game-save`: ensure every native OpenSave read and Eden status read avoids device-heartbeat writes.
+- [ ] Eden: show title, local confirmed head, authoritative cloud head, source device, conflicts, pending
+  work, and recovery copies in a view that cannot upload, download, or restore.
+- [ ] OpenSave: expose the same fields per `{type}/{gameId}` through its local API and Cloud tab.
+- [ ] OpenSave: reject an ordinary restore while its native scope still has a retained conflict.
+- [ ] Regression: prove an isolated two-device stale-write case keeps the original head and lists the
+  divergent candidate as a conflict on both clients.
 
 #### P2 Delivery Order And Native OpenSave Contract
 
