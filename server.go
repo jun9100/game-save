@@ -48,6 +48,9 @@ type server struct {
 	settings  serverSettings
 	events    []event
 
+	openSaveMu      sync.Mutex
+	openSaveCatalog openSaveCatalog
+
 	verifying sync.Mutex
 	logins    loginLimiter
 	requests  atomic.Int64
@@ -119,7 +122,8 @@ func newServerWithOptions(dataDir, token string, maxObjectBytes int64, options s
 			Scopes:  make(map[string]scopeMetadata),
 			Devices: make(map[string]deviceInfo),
 		},
-		logins: loginLimiter{failures: make(map[string]loginFailures)},
+		openSaveCatalog: openSaveCatalog{Files: make(map[string]openSaveFileMetadata)},
+		logins:          loginLimiter{failures: make(map[string]loginFailures)},
 	}
 	if err := s.loadState(); err != nil {
 		s.Close()
@@ -134,6 +138,10 @@ func newServerWithOptions(dataDir, token string, maxObjectBytes int64, options s
 		return nil, err
 	}
 	if err := s.loadEvents(); err != nil {
+		s.Close()
+		return nil, err
+	}
+	if err := s.loadOpenSaveCatalog(); err != nil {
 		s.Close()
 		return nil, err
 	}

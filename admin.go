@@ -52,6 +52,7 @@ func (s *server) registerAdmin(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /admin/api/overview", s.requireAdmin(s.handleOverview))
 	mux.HandleFunc("GET /admin/api/events", s.requireAdmin(s.handleEvents))
+	mux.HandleFunc("GET /admin/api/opensave/files", s.requireAdmin(s.handleOpenSaveFiles))
 	mux.HandleFunc("GET /admin/api/scopes/{id}", s.requireAdmin(s.handleScopeDetail))
 	mux.HandleFunc("PATCH /admin/api/scopes/{id}", s.requireAdminWrite(s.handlePatchScope))
 	mux.HandleFunc("DELETE /admin/api/scopes/{id}", s.requireAdminWrite(s.handleDeleteScope))
@@ -145,6 +146,8 @@ type overviewStats struct {
 	OnlineDevices   int   `json:"online_devices"`
 	Uploads7d       int   `json:"uploads_7d"`
 	Conflicts7d     int   `json:"conflicts_7d"`
+	OpenSaveFiles   int   `json:"opensave_files"`
+	OpenSaveBytes   int64 `json:"opensave_bytes"`
 }
 
 type serverInfo struct {
@@ -229,6 +232,10 @@ func (s *server) handleOverview(w http.ResponseWriter, r *http.Request) {
 		Devices: []deviceView{},
 	}
 	response.Server.DiskTotal, response.Server.DiskFree = diskUsage(s.dataDir)
+	for _, file := range s.listOpenSaveFiles() {
+		response.Stats.OpenSaveFiles++
+		response.Stats.OpenSaveBytes += file.SizeBytes
+	}
 
 	const days = 30
 	today := time.Date(now.In(location).Year(), now.In(location).Month(), now.In(location).Day(), 0, 0, 0, 0, location)
@@ -335,6 +342,10 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	events := s.recentEventsLocked(limit)
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+}
+
+func (s *server) handleOpenSaveFiles(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"files": s.listOpenSaveFiles()})
 }
 
 func (s *server) handleScopeDetail(w http.ResponseWriter, r *http.Request) {
@@ -819,6 +830,11 @@ func (s *server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 		stored += size
 	}
 	total, free := diskUsage(s.dataDir)
+	openSaveFiles := s.listOpenSaveFiles()
+	var openSaveBytes int64
+	for _, file := range openSaveFiles {
+		openSaveBytes += file.SizeBytes
+	}
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	metric := func(name, kind, help string, value any) {
@@ -832,6 +848,8 @@ func (s *server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 	metric("game_save_stored_bytes", "gauge", "Bytes used by referenced objects.", stored)
 	metric("game_save_devices", "gauge", "Known client devices.", devices)
 	metric("game_save_devices_online", "gauge", "Devices seen within the online window.", online)
+	metric("game_save_opensave_archives", "gauge", "Native OpenSave archives.", len(openSaveFiles))
+	metric("game_save_opensave_archive_bytes", "gauge", "Bytes used by native OpenSave archives.", openSaveBytes)
 	metric("game_save_http_requests_total", "counter", "HTTP requests served since start.", s.requests.Load())
 	metric("game_save_start_time_seconds", "gauge", "Process start time.", s.startedAt.Unix())
 	if total > 0 {

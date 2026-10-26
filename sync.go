@@ -60,11 +60,21 @@ func (s *server) requireToken(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func requestDeviceID(r *http.Request) string {
-	deviceID := strings.TrimSpace(r.Header.Get("X-Eden-Device-ID"))
+	deviceID := requestClientHeader(r, "X-Eden-Device-ID", "X-OpenSave-Device-ID")
 	if !validIdentifier(deviceID, 128) {
 		return ""
 	}
 	return deviceID
+}
+
+// requestClientHeader accepts the Eden headers used by released clients and
+// the OpenSave-specific equivalents used by the native archive API. Device
+// identity is informational only; the bearer token remains the credential.
+func requestClientHeader(r *http.Request, edenHeader, openSaveHeader string) string {
+	if value := strings.TrimSpace(r.Header.Get(openSaveHeader)); value != "" {
+		return value
+	}
+	return strings.TrimSpace(r.Header.Get(edenHeader))
 }
 
 func remoteHost(r *http.Request) string {
@@ -83,9 +93,9 @@ func (s *server) recordDevice(r *http.Request) {
 	now := time.Now().UTC()
 	device := deviceInfo{
 		ID:        deviceID,
-		Name:      trimDeviceField(r.Header.Get("X-Eden-Device-Name"), 80),
-		Platform:  trimDeviceField(r.Header.Get("X-Eden-Platform"), 32),
-		Version:   trimDeviceField(r.Header.Get("X-Eden-Version"), 64),
+		Name:      trimDeviceField(requestClientHeader(r, "X-Eden-Device-Name", "X-OpenSave-Device-Name"), 80),
+		Platform:  trimDeviceField(requestClientHeader(r, "X-Eden-Platform", "X-OpenSave-Platform"), 32),
+		Version:   trimDeviceField(requestClientHeader(r, "X-Eden-Version", "X-OpenSave-Version"), 64),
 		Address:   remoteHost(r),
 		FirstSeen: now,
 		LastSeen:  now,
