@@ -30,7 +30,7 @@ const (
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
-var version = "v1.4.0-dev"
+var version = "v1.4.1-dev"
 
 type server struct {
 	dataDir          string
@@ -169,7 +169,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/blobs/{id}", s.requireToken(s.handleGetBlob))
 	mux.HandleFunc("GET /v1/scopes", s.requireToken(s.handleListScopes))
 	mux.HandleFunc("GET /v1/scopes/{id}/status", s.requireTokenReadOnly(s.handleGetScopeStatus))
-	mux.HandleFunc("GET /v1/scopes/{id}/head", s.requireToken(s.handleGetHead))
+	// The legacy head endpoint remains a status fallback for older Eden
+	// services. It is a read, not a synchronization heartbeat.
+	mux.HandleFunc("GET /v1/scopes/{id}/head", s.requireTokenReadOnly(s.handleGetHead))
 	mux.HandleFunc("PUT /v1/scopes/{id}/snapshots/{snapshot}", s.requireToken(s.handlePutSnapshot))
 	mux.HandleFunc("PUT /v1/scopes/{id}/conflicts/{snapshot}", s.requireToken(s.handlePutConflictSnapshot))
 	mux.HandleFunc("PUT /v1/scopes/{id}/metadata", s.requireToken(s.handlePutScopeMetadata))
@@ -177,12 +179,15 @@ func (s *server) handler() http.Handler {
 
 	// OpenSave is a separate client family. It uses the same private sync
 	// credential but a wholly separate on-disk namespace from Eden snapshots.
-	mux.HandleFunc("GET /v1/opensave/files", s.requireToken(s.handleOpenSaveList))
+	// Reads are intentionally independent from device heartbeats. Opening a
+	// status screen, listing archives, or inspecting a head must not make an
+	// inactive device appear to have synchronized successfully.
+	mux.HandleFunc("GET /v1/opensave/files", s.requireTokenReadOnly(s.handleOpenSaveList))
 	mux.HandleFunc("PUT /v1/opensave/files/{type}/{name}", s.requireToken(s.handleOpenSaveNativePut))
-	mux.HandleFunc("GET /v1/opensave/files/{type}/{name}", s.requireToken(s.handleOpenSaveNativeGet))
+	mux.HandleFunc("GET /v1/opensave/files/{type}/{name}", s.requireTokenReadOnly(s.handleOpenSaveNativeGet))
 	mux.HandleFunc("DELETE /v1/opensave/files/{type}/{name}", s.requireToken(s.handleOpenSaveNativeDelete))
-	mux.HandleFunc("GET /v1/opensave/scopes/{type}/{game}", s.requireToken(s.handleOpenSaveScope))
-	mux.HandleFunc("GET /v1/opensave/scopes/{type}/{game}/head", s.requireToken(s.handleOpenSaveScopeHead))
+	mux.HandleFunc("GET /v1/opensave/scopes/{type}/{game}", s.requireTokenReadOnly(s.handleOpenSaveScope))
+	mux.HandleFunc("GET /v1/opensave/scopes/{type}/{game}/head", s.requireTokenReadOnly(s.handleOpenSaveScopeHead))
 	mux.HandleFunc("PUT /v1/opensave/scopes/{type}/{game}/snapshots/{snapshot}", s.requireToken(s.handlePutOpenSaveScopeSnapshot))
 	mux.HandleFunc("PUT /v1/opensave/scopes/{type}/{game}/conflicts/{snapshot}", s.requireToken(s.handlePutOpenSaveScopeConflict))
 

@@ -902,14 +902,16 @@ func TestScopeStatusIsReadOnlyAndListsAuthoritativeHeadAndConflicts(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		response.Body.Close()
 		t.Fatalf("status response = %d", response.StatusCode)
 	}
 	var status scopeStatusResponse
 	if err := json.NewDecoder(response.Body).Decode(&status); err != nil {
+		response.Body.Close()
 		t.Fatal(err)
 	}
+	response.Body.Close()
 	if status.Scope != "scope-1" || status.Title != "Isolated Test Title" ||
 		status.UserName != "Test User" || status.Head == nil || status.Head.ID != "head-1" ||
 		status.Head.Blob != headBlob || status.Head.Device == nil || status.Head.Device.ID != "desktop-1" ||
@@ -920,6 +922,19 @@ func TestScopeStatusIsReadOnlyAndListsAuthoritativeHeadAndConflicts(t *testing.T
 		len(status.Conflicts) != 1 || status.Conflicts[0].ID != "conflict-1" ||
 		!status.Conflicts[0].Conflict || status.Conflicts[0].ConflictOf != "head-1" {
 		t.Fatalf("unexpected recoverable versions: %+v", status)
+	}
+
+	// A status dialog falls back to the legacy head route when the new status
+	// endpoint is absent. That compatibility read must remain side-effect free.
+	request = authorizedRequest(t, http.MethodGet, httpServer.URL+"/v1/scopes/scope-1/head", nil)
+	request.Header.Set("X-Eden-Device-ID", "read-only-client")
+	response, err = http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("head response = %d", response.StatusCode)
 	}
 
 	s.mu.Lock()
