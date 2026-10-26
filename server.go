@@ -30,7 +30,7 @@ const (
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
-var version = "v1.1.0-dev"
+var version = "v1.3.0-dev"
 
 type server struct {
 	dataDir          string
@@ -50,6 +50,7 @@ type server struct {
 
 	openSaveMu      sync.Mutex
 	openSaveCatalog openSaveCatalog
+	openSaveState   openSaveNativeState
 
 	verifying sync.Mutex
 	logins    loginLimiter
@@ -123,6 +124,7 @@ func newServerWithOptions(dataDir, token string, maxObjectBytes int64, options s
 			Devices: make(map[string]deviceInfo),
 		},
 		openSaveCatalog: openSaveCatalog{Files: make(map[string]openSaveFileMetadata)},
+		openSaveState:   openSaveNativeState{Scopes: make(map[string]openSaveScopeState)},
 		logins:          loginLimiter{failures: make(map[string]loginFailures)},
 	}
 	if err := s.loadState(); err != nil {
@@ -142,6 +144,10 @@ func newServerWithOptions(dataDir, token string, maxObjectBytes int64, options s
 		return nil, err
 	}
 	if err := s.loadOpenSaveCatalog(); err != nil {
+		s.Close()
+		return nil, err
+	}
+	if err := s.loadOpenSaveState(); err != nil {
 		s.Close()
 		return nil, err
 	}
@@ -174,6 +180,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/opensave/files/{type}/{name}", s.requireToken(s.handleOpenSaveNativePut))
 	mux.HandleFunc("GET /v1/opensave/files/{type}/{name}", s.requireToken(s.handleOpenSaveNativeGet))
 	mux.HandleFunc("DELETE /v1/opensave/files/{type}/{name}", s.requireToken(s.handleOpenSaveNativeDelete))
+	mux.HandleFunc("GET /v1/opensave/scopes/{type}/{game}", s.requireToken(s.handleOpenSaveScope))
+	mux.HandleFunc("GET /v1/opensave/scopes/{type}/{game}/head", s.requireToken(s.handleOpenSaveScopeHead))
+	mux.HandleFunc("PUT /v1/opensave/scopes/{type}/{game}/snapshots/{snapshot}", s.requireToken(s.handlePutOpenSaveScopeSnapshot))
+	mux.HandleFunc("PUT /v1/opensave/scopes/{type}/{game}/conflicts/{snapshot}", s.requireToken(s.handlePutOpenSaveScopeConflict))
 
 	// OpenSave uses ordinary WebDAV snapshots, isolated from the encrypted Eden
 	// object store and guarded by a credential that is independent of both Eden

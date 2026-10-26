@@ -3,7 +3,7 @@
 
 services:
   game-save:
-    image: ${GAME_SAVE_IMAGE:-jun9100/game-save:v1.1.0}
+    image: ${GAME_SAVE_IMAGE:-jun9100/game-save:v1.3.0}
     user: "${PUID:-10001}:${PGID:-10001}"
     environment:
       GAME_SAVE_TOKEN: ${GAME_SAVE_TOKEN:?set GAME_SAVE_TOKEN in .env}

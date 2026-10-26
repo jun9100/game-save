@@ -33,7 +33,7 @@ by the planned OpenSave synchronization flow.
 
 | Component | Baseline | Required behavior before shared-save use | Next release gate |
 | --- | --- | --- | --- |
-| `game-save` | `v1.1.0` | Eden protocol v2 is required for all Eden writes; native OpenSave API has typed storage. | P1 server-side protection is already in this release; a new image is only tagged when server behavior changes. |
+| `game-save` | `v1.3.0` | Eden protocol v2 is required for all Eden writes; OpenSave has immutable, typed CAS scopes. | P2 server release adds native scope head and conflict visibility. |
 | Eden | `v2026.10.25-1` | Uses the v2 protocol, records confirmed content state, preserves restore copies, quarantines unsafe pending chains, and creates conflicts instead of overwriting a newer cloud head. | Add per-title sync-state visibility and isolated regression coverage. |
 | OpenSave desktop | `v2.4.5` | Uses the native provider, with PC/Switch/emulator namespaces isolated. | Add per-save sync status and a manifest-based restore/conflict contract. |
 | OpenSave Android | `0.3.15 (20)` | Supports selected Root and SAF roots, type filters, icons/names, and batch/automatic backups. | Add source-capability state, native sync status, and isolated device regression coverage. |
@@ -81,6 +81,30 @@ cloud head unchanged and creates a conflict record.
 
 Acceptance: a tester can identify the authoritative cloud head, its device source, and every recoverable
 alternative without inspecting server files or guessing from timestamps.
+
+#### P2 Delivery Order And Native OpenSave Contract
+
+Status: `game-save` implementation is ready for the `v1.3.0` release; OpenSave and Eden consume the resulting
+state in their follow-up releases.
+
+1. `game-save` stores each OpenSave archive immutably below its existing typed namespace. Retrying the same
+   archive bytes is idempotent; a same-name upload with different bytes is rejected.
+2. A native OpenSave scope is exactly `{type}/{gameId}`. `type` is `pc`, `switch`, or `emulator-<id>` and
+   never crosses into another namespace.
+3. A client uploads an archive, then submits `id`, `archive`, `parent`, `contentDigest`, and `createdAt` to
+   `PUT /v1/opensave/scopes/{type}/{gameId}/snapshots/{id}` with `If-Match: "<confirmed-head>"`. The server
+   verifies the archive digest and advances the head only when both the header and parent equal its current
+   head. `If-Match: ""` creates the first head.
+4. A rejected candidate is retained with
+   `PUT /v1/opensave/scopes/{type}/{gameId}/conflicts/{id}`. It never changes the head and remains a
+   recoverable alternative. Archives named by a scope state cannot be removed through the native file API.
+5. `GET /v1/opensave/scopes/{type}/{gameId}` returns an empty state for a new scope and otherwise returns
+   the authoritative head, every snapshot, and conflict copies. `GET .../head` returns only the current head
+   with its ETag. These APIs allow a new client to detect CAS support without treating a missing first head as
+   a legacy-server failure.
+6. OpenSave desktop and Android will prefer this contract. They retain the previous ZIP-head protocol only
+   when a server returns a route-level `404`, so users can upgrade clients before the server image without
+   losing compatibility.
 
 ### P3: Save Discovery And Typed Sources
 

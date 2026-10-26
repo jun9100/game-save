@@ -7,7 +7,7 @@
 
 services:
   game-save:
-    image: jun9100/game-save:v1.1.0
+    image: jun9100/game-save:v1.3.0
     container_name: game-save
     user: "1026:100"
     env_file:

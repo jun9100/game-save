@@ -14,6 +14,8 @@ const store = {
   scopeDetail: null,
   events: null,
   openSaveFiles: null,
+  openSaveScopes: null,
+  openSaveScopeDetail: null,
   openSaveQuery: "",
   openSaveType: "all",
   savesQuery: "",
@@ -108,6 +110,8 @@ function scopeByID(id) {
   return store.overview?.scopes.find((s) => s.id === id);
 }
 function scopeTitle(id) {
+  const openSave = /^opensave:([^/]+)\/(.+)$/.exec(id || "");
+  if (openSave) return `OpenSave ${openSaveTypeLabel(openSave[1])} · ${openSave[2]}`;
   const scope = scopeByID(id);
   return scope?.title || (id ? `存档 ${shortID(id, 8)}` : "未知存档");
 }
@@ -294,7 +298,10 @@ function describeEvent(item) {
 
 function eventRow(item, { withDate = false } = {}) {
   const [text, detail] = describeEvent(item);
-  const link = item.scope && scopeByID(item.scope) ? `href="#/saves/${encodeURIComponent(item.scope)}"` : "";
+  const openSave = /^opensave:([^/]+)\/(.+)$/.exec(item.scope || "");
+  const link = openSave
+    ? `href="#/opensave/${encodeURIComponent(openSave[1])}/${encodeURIComponent(openSave[2])}"`
+    : item.scope && scopeByID(item.scope) ? `href="#/saves/${encodeURIComponent(item.scope)}"` : "";
   const tag = link ? "a" : "div";
   return `<${tag} class="row" ${link}>
     <span class="ev ${esc(item.kind)}">${icon(eventIcons[item.kind] || "activity")}</span>
@@ -483,6 +490,43 @@ function openSaveSource(file) {
   return "旧归档（无来源记录）";
 }
 
+function openSaveScopeSource(scope) {
+  if (scope.headDeviceName) return scope.headDeviceName;
+  if (scope.headDevice) return deviceName(scope.headDevice);
+  return "未确认来源";
+}
+
+function openSaveScopeStatus(scope) {
+  if (!scope.head) return ["等待首个版本", "warn"];
+  if (scope.conflictCount) return [`${scope.conflictCount} 个冲突待处理`, "danger"];
+  return ["当前版本已确认", "ok"];
+}
+
+function openSaveScopeLink(scope) {
+  return `#/opensave/${encodeURIComponent(scope.type)}/${encodeURIComponent(scope.gameId)}`;
+}
+
+function openSaveScopeCard(scope) {
+  const [status, tone] = openSaveScopeStatus(scope);
+  const head = scope.head;
+  const received = head?.receivedAt || scope.lastReceivedAt;
+  return `<a class="card opensave-scope" href="${openSaveScopeLink(scope)}">
+    <div class="opensave-scope-top">
+      <span class="badge accent">${esc(openSaveTypeLabel(scope.type))}</span>
+      <span class="badge ${tone}">${esc(status)}</span>
+    </div>
+    <strong class="opensave-game" title="${esc(scope.gameId)}">${esc(scope.gameId)}</strong>
+    <div class="opensave-scope-meta">
+      <span>${esc(openSaveScopeSource(scope))}</span>
+      <span title="${esc(absTime(received))}">${esc(relTime(received))}</span>
+    </div>
+    <div class="opensave-scope-stats">
+      <span><small>权威版本</small><code title="${esc(head?.id || "")}">${esc(head ? shortID(head.id, 18) : "未建立")}</code></span>
+      <span><small>可恢复版本</small><b>${Number(scope.snapshotCount) || 0}</b></span>
+    </div>
+  </a>`;
+}
+
 function openSaveRow(file) {
   const timestamp = file.uploadedAt || file.createdTime;
   const hash = file.sha256 ? shortID(file.sha256, 16) : "旧归档未记录校验值";
@@ -496,13 +540,15 @@ function openSaveRow(file) {
 }
 
 async function renderOpenSave() {
-  if (!store.openSaveFiles) {
+  if (!store.openSaveFiles || !store.openSaveScopes) {
     main.innerHTML = `<div class="skeleton"></div>`;
-    const response = await api("opensave/files");
-    store.openSaveFiles = response.files || [];
+    const [files, scopes] = await Promise.all([api("opensave/files"), api("opensave/scopes")]);
+    store.openSaveFiles = files.files || [];
+    store.openSaveScopes = scopes.scopes || [];
     if (currentRoute().name !== "opensave") return;
   }
   const files = store.openSaveFiles;
+  const scopes = store.openSaveScopes;
   const types = [...new Set(files.map((file) => file.type).filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const query = store.openSaveQuery.trim().toLowerCase();
   const visible = files.filter((file) => {
@@ -510,16 +556,25 @@ async function renderOpenSave() {
     return !query || file.name.toLowerCase().includes(query) || openSaveSource(file).toLowerCase().includes(query);
   });
   visible.sort((left, right) => new Date(right.uploadedAt || right.createdTime) - new Date(left.uploadedAt || left.createdTime));
+  const visibleScopes = scopes.filter((scope) => {
+    if (store.openSaveType !== "all" && scope.type !== store.openSaveType) return false;
+    const searchable = `${scope.gameId || ""} ${openSaveScopeSource(scope)} ${scope.head?.id || ""}`.toLowerCase();
+    return !query || searchable.includes(query);
+  });
 
   main.innerHTML = `
-    ${pageHead("OpenSave 归档", `${files.length} 个原生归档 · 只读审计视图，不会删除或恢复任何存档`)}
+    ${pageHead("OpenSave 存档", `${scopes.length} 个同步范围 · ${files.length} 个不可变归档`)}
     <div class="toolbar">
       <label class="search">${icon("search")}<input type="search" id="opensave-search" placeholder="搜索归档或来源设备" value="${esc(store.openSaveQuery)}"></label>
       <select id="opensave-type" aria-label="归档类型"><option value="all">全部类型</option>
         ${types.map((type) => `<option value="${esc(type)}">${esc(openSaveTypeLabel(type))}</option>`).join("")}</select>
     </div>
+    <section class="opensave-scopes">
+      ${visibleScopes.length ? visibleScopes.map(openSaveScopeCard).join("")
+        : emptyState(scopes.length ? "没有匹配的同步范围" : "还没有同步范围", scopes.length ? "尝试其他关键词或类型筛选。" : "客户端完成首次同步后会显示在这里。")}
+    </section>
     <section class="card opensave-list">
-      <div class="card-head"><h2>云端归档</h2><span class="hint">SHA-256 由服务端接收归档时计算；旧归档保留原有可读性，但可能没有审计字段。</span></div>
+      <div class="card-head"><h2>归档审计</h2><span class="hint">服务端 SHA-256</span></div>
       <div class="card-body">${visible.length ? visible.map(openSaveRow).join("")
         : emptyState(files.length ? "没有匹配的归档" : "还没有 OpenSave 归档", files.length ? "尝试其他关键词或类型筛选。" : "OpenSave 客户端完成一次原生 game-save 备份后会显示在这里。")}</div>
     </section>`;
@@ -536,6 +591,52 @@ async function renderOpenSave() {
     next.focus();
     next.setSelectionRange(position, position);
   };
+}
+
+function openSaveSnapshotRow(snapshot, headID) {
+  const source = snapshot.deviceName || snapshot.device || "未确认来源";
+  const state = snapshot.conflict ? `<span class="badge danger">冲突副本</span>`
+    : snapshot.id === headID ? `<span class="badge ok">当前版本</span>` : `<span class="badge">历史版本</span>`;
+  return `<div class="opensave-snapshot ${snapshot.conflict ? "conflict" : ""}">
+    <div class="opensave-snapshot-main">
+      <div class="opensave-snapshot-line"><code title="${esc(snapshot.id)}">${esc(shortID(snapshot.id, 26))}</code>${state}</div>
+      <span>${esc(source)} · ${esc(absTime(snapshot.receivedAt || snapshot.createdAt))}</span>
+      <span class="mono" title="${esc(snapshot.archive)}">${esc(snapshot.archive)}</span>
+    </div>
+    <div class="opensave-lineage">
+      <small>父版本</small><code title="${esc(snapshot.parent || "")}">${esc(snapshot.parent ? shortID(snapshot.parent, 18) : "首次版本")}</code>
+    </div>
+  </div>`;
+}
+
+async function renderOpenSaveScope(type, gameId) {
+  const cacheKey = `${type}\u0000${gameId}`;
+  if (!store.openSaveScopeDetail || store.openSaveScopeDetail.cacheKey !== cacheKey) {
+    main.innerHTML = `<div class="skeleton"></div>`;
+    const detail = await api(`opensave/scopes/${encodeURIComponent(type)}/${encodeURIComponent(gameId)}`);
+    store.openSaveScopeDetail = { ...detail, cacheKey };
+    if (currentRoute().name !== "opensaveScope") return;
+  }
+  const scope = store.openSaveScopeDetail;
+  const head = scope.head;
+  const snapshots = scope.snapshots || [];
+  main.innerHTML = `
+    <a class="back" href="#/opensave">${icon("back")}返回 OpenSave 存档</a>
+    ${pageHead(scope.gameId, `${openSaveTypeLabel(scope.type)} · ${scope.snapshotCount || snapshots.length} 个可恢复版本`)}
+    <section class="card opensave-scope-hero">
+      <div class="opensave-hero-summary">
+        <span class="badge accent">${esc(openSaveTypeLabel(scope.type))}</span>
+        ${scope.conflictCount ? `<span class="badge danger">${scope.conflictCount} 个冲突副本</span>` : `<span class="badge ok">无未解决冲突</span>`}
+        <div><span>权威版本</span><code title="${esc(head?.id || "")}">${esc(head ? head.id : "未建立")}</code></div>
+        <div><span>来源设备</span><b>${esc(openSaveScopeSource(scope))}</b></div>
+        <div><span>接收时间</span><b title="${esc(absTime(head?.receivedAt || scope.lastReceivedAt))}">${esc(absTime(head?.receivedAt || scope.lastReceivedAt))}</b></div>
+      </div>
+    </section>
+    <section class="card section opensave-history">
+      <div class="card-head"><h2>版本记录</h2><span class="hint">权威版本由父链与 CAS 确认</span></div>
+      <div class="card-body">${snapshots.length ? snapshots.map((item) => openSaveSnapshotRow(item, head?.id)).join("")
+        : emptyState("还没有版本", "")}</div>
+    </section>`;
 }
 
 async function renderScope(id) {
@@ -801,8 +902,11 @@ function renderMaintenance() {
 
 function currentRoute() {
   const hash = location.hash.replace(/^#\/?/, "");
-  const [name, id] = hash.split("/");
+  const [name, id, detail] = hash.split("/");
   if (name === "saves" && id) return { name: "scope", id: decodeURIComponent(id), nav: "saves" };
+  if (name === "opensave" && id && detail) {
+    return { name: "opensaveScope", type: decodeURIComponent(id), gameId: decodeURIComponent(detail), nav: "opensave" };
+  }
   const known = ["saves", "opensave", "devices", "activity", "maintenance"];
   return { name: known.includes(name) ? name : "overview", nav: known.includes(name) ? name : "overview" };
 }
@@ -811,12 +915,13 @@ async function render() {
   const route = currentRoute();
   document.querySelectorAll("#nav a").forEach((link) =>
     link.classList.toggle("active", link.dataset.route === route.nav));
-  const titles = { overview: "概览", saves: "存档", scope: "存档", opensave: "OpenSave", devices: "设备", activity: "活动", maintenance: "维护" };
+  const titles = { overview: "概览", saves: "存档", scope: "存档", opensave: "OpenSave", opensaveScope: "OpenSave 存档", devices: "设备", activity: "活动", maintenance: "维护" };
   document.title = `${titles[route.name]} · Game Save`;
   switch (route.name) {
     case "saves": return renderSaves();
     case "scope": return renderScope(route.id);
     case "opensave": return renderOpenSave();
+    case "opensaveScope": return renderOpenSaveScope(route.type, route.gameId);
     case "devices": return renderDevices();
     case "activity": return renderActivity();
     case "maintenance": return renderMaintenance();
@@ -830,6 +935,8 @@ async function refresh({ quiet = false } = {}) {
   refreshing = true;
   try {
     store.openSaveFiles = null;
+    store.openSaveScopes = null;
+    store.openSaveScopeDetail = null;
     await loadOverview();
     const route = currentRoute();
     // Avoid wiping half-typed form input during background refreshes.
