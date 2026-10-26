@@ -97,6 +97,26 @@ func (s *server) openSavePath(kind, name string) (string, bool) {
 	return filepath.Join(s.openSaveNativeDirectory(), kind, name), true
 }
 
+// openSaveArchiveDigestLocked returns the digest of the bytes currently stored
+// on disk. The caller holds openSaveMu, so a successful comparison remains
+// true until it has finished the associated state transition.
+func (s *server) openSaveArchiveDigestLocked(kind, name string) (string, error) {
+	path, ok := s.openSavePath(kind, name)
+	if !ok {
+		return "", errors.New("invalid OpenSave archive path")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
 func (s *server) handleOpenSaveList(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"files": s.listOpenSaveFiles()})
 }
@@ -190,13 +210,37 @@ func (s *server) handleOpenSaveNativePut(w http.ResponseWriter, r *http.Request)
 	}
 	s.openSaveMu.Lock()
 	defer s.openSaveMu.Unlock()
-	if err := os.Rename(temporaryPath, destination); err != nil {
-		writeError(w, http.StatusInternalServerError, "cannot publish OpenSave archive")
+	digest := hex.EncodeToString(hash.Sum(nil))
+	// Link publication is create-only: a second uploader can never replace an
+	// archive that another request has already finished. The temporary file and
+	// destination live in the same directory, so a successful link is atomic.
+	// We deliberately fail closed on filesystems that cannot provide this
+	// guarantee instead of falling back to a truncating write.
+	if err := os.Link(temporaryPath, destination); err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			writeError(w, http.StatusInternalServerError, "cannot publish OpenSave archive")
+			return
+		}
+		existingDigest, digestErr := s.openSaveArchiveDigestLocked(kind, name)
+		if digestErr != nil {
+			writeError(w, http.StatusInternalServerError, "cannot verify existing OpenSave archive")
+			return
+		}
+		if existingDigest == digest {
+			// A lost response may make a client retry the same immutable archive.
+			// Treat that as success without changing its original audit metadata.
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		writeError(w, http.StatusConflict, "OpenSave archive name already has different content")
 		return
 	}
+	// The destination now has its own hard link. The deferred removal is a
+	// second safeguard if this unlink fails during a transient filesystem error.
+	_ = os.Remove(temporaryPath)
 
 	metadata := openSaveFileMetadata{
-		SHA256:     hex.EncodeToString(hash.Sum(nil)),
+		SHA256:     digest,
 		Device:     requestDeviceID(r),
 		DeviceName: trimDeviceField(requestClientHeader(r, "X-Eden-Device-Name", "X-OpenSave-Device-Name"), 80),
 		UploadedAt: time.Now().UTC(),
@@ -248,6 +292,10 @@ func (s *server) handleOpenSaveNativeDelete(w http.ResponseWriter, r *http.Reque
 	}
 	s.openSaveMu.Lock()
 	defer s.openSaveMu.Unlock()
+	if s.openSaveArchiveReferencedLocked(kind, name) {
+		writeError(w, http.StatusConflict, "OpenSave archive is referenced by a recoverable snapshot")
+		return
+	}
 	if err := os.Remove(path); errors.Is(err, os.ErrNotExist) {
 		writeError(w, http.StatusNotFound, "OpenSave archive not found")
 	} else if err != nil {

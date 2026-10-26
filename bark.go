@@ -302,7 +302,9 @@ func (s *server) notifyBarkLocked(item event) {
 	}
 
 	scopeName := "A game save"
-	if item.Scope != "" {
+	if openSaveName, ok := openSaveEventScopeName(item.Scope); ok {
+		scopeName = openSaveName
+	} else if item.Scope != "" {
 		if title := strings.TrimSpace(s.dashboard.Scopes[item.Scope].Title); title != "" {
 			scopeName = title
 		}

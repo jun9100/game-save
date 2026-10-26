@@ -59,6 +59,41 @@ func TestBarkConflictNotification(t *testing.T) {
 	}
 }
 
+func TestBarkOpenSaveConflictUsesTypedScopeName(t *testing.T) {
+	requests := make(chan *url.URL, 1)
+	barkServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clone := *r.URL
+		requests <- &clone
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer barkServer.Close()
+
+	s, err := newServerWithOptions(t.TempDir(), testToken, 1024*1024, serverOptions{
+		bark: barkConfig{Endpoint: barkServer.URL + "/device-key", Events: eventConflict},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	s.mu.Lock()
+	s.dashboard.Devices["desktop-1"] = deviceInfo{Name: "Test Desktop"}
+	s.mu.Unlock()
+	s.recordOpenSaveScopeEvent(eventConflict, "switch", "odyssey", openSaveScopeSnapshot{
+		openSaveScopeCandidate: openSaveScopeCandidate{ID: "snapshot-2", Archive: "odyssey__main__snapshot-2.zip"},
+		Device:                 "desktop-1",
+	})
+
+	select {
+	case request := <-requests:
+		if request.Path != "/device-key/Game Save conflict/OpenSave switch - odyssey from Test Desktop conflicts with the current cloud head. A conflict copy was retained for review." {
+			t.Fatalf("Bark path = %q", request.Path)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for OpenSave conflict notification")
+	}
+}
+
 func TestBarkCoalescesDuplicateConflict(t *testing.T) {
 	requests := make(chan struct{}, 2)
 	barkServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

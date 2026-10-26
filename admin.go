@@ -53,6 +53,8 @@ func (s *server) registerAdmin(mux *http.ServeMux) {
 	mux.HandleFunc("GET /admin/api/overview", s.requireAdmin(s.handleOverview))
 	mux.HandleFunc("GET /admin/api/events", s.requireAdmin(s.handleEvents))
 	mux.HandleFunc("GET /admin/api/opensave/files", s.requireAdmin(s.handleOpenSaveFiles))
+	mux.HandleFunc("GET /admin/api/opensave/scopes", s.requireAdmin(s.handleOpenSaveScopes))
+	mux.HandleFunc("GET /admin/api/opensave/scopes/{type}/{game}", s.requireAdmin(s.handleOpenSaveScopeDetail))
 	mux.HandleFunc("GET /admin/api/scopes/{id}", s.requireAdmin(s.handleScopeDetail))
 	mux.HandleFunc("PATCH /admin/api/scopes/{id}", s.requireAdminWrite(s.handlePatchScope))
 	mux.HandleFunc("DELETE /admin/api/scopes/{id}", s.requireAdminWrite(s.handleDeleteScope))
@@ -346,6 +348,25 @@ func (s *server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) handleOpenSaveFiles(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"files": s.listOpenSaveFiles()})
+}
+
+func (s *server) handleOpenSaveScopes(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"scopes": s.listOpenSaveScopeAudits()})
+}
+
+func (s *server) handleOpenSaveScopeDetail(w http.ResponseWriter, r *http.Request) {
+	kind, gameID, key, ok := openSaveScopeFromRequest(w, r)
+	if !ok {
+		return
+	}
+	s.openSaveMu.Lock()
+	defer s.openSaveMu.Unlock()
+	stored, exists := s.openSaveState.Scopes[key]
+	if !exists {
+		writeError(w, http.StatusNotFound, "OpenSave scope not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.openSaveScopeAuditLocked(kind, gameID, stored))
 }
 
 func (s *server) handleScopeDetail(w http.ResponseWriter, r *http.Request) {

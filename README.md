@@ -8,8 +8,8 @@ is the standalone successor to `eden-syncd`: the existing Eden protocol remains
 available, while OpenSave uses a separate, typed archive API. The service never
 interprets game-save contents.
 
-The current standalone release is `v1.1.0` and is published as
-`jun9100/game-save:v1.1.0` for `linux/amd64` and `linux/arm64`.
+The next standalone release is `v1.3.0`; its matching image will be
+`jun9100/game-save:v1.3.0` for `linux/amd64` and `linux/arm64`.
 
 ## Client Protocols
 
@@ -36,12 +36,21 @@ GET    /v1/opensave/files
 PUT    /v1/opensave/files/{type}/{name}
 GET    /v1/opensave/files/{type}/{name}
 DELETE /v1/opensave/files/{type}/{name}
+GET    /v1/opensave/scopes/{type}/{gameId}
+GET    /v1/opensave/scopes/{type}/{gameId}/head
+PUT    /v1/opensave/scopes/{type}/{gameId}/snapshots/{snapshotId}
+PUT    /v1/opensave/scopes/{type}/{gameId}/conflicts/{snapshotId}
 ```
 
 They require `Authorization: Bearer <GAME_SAVE_TOKEN>`. Native archives live at
 `opensave-native/<type>/` and cannot collide with Eden encrypted objects or the
-legacy WebDAV collection. A matching OpenSave client build is required before
-selecting this provider.
+legacy WebDAV collection. The first upload creates an immutable archive; a
+retry with the same bytes is idempotent, while different bytes under the same
+name return `409 Conflict`. A client advances a typed `{type}/{gameId}` cloud
+head only through the snapshot endpoint with an `If-Match` header for its
+confirmed parent. A rejected branch is sent to the conflict endpoint and
+remains recoverable without changing the head. A matching OpenSave client build
+is required before selecting this provider.
 
 ### OpenSave WebDAV Compatibility
 
@@ -64,10 +73,10 @@ Basic Auth. Set both `GAME_SAVE_OPENSAVE_USERNAME` and
 
 The persistent data directory contains `objects/`, `state.json`,
 `dashboard.json`, `settings.json`, `events.json`, `opensave/`, and (after a
-native OpenSave upload) `opensave-native/` plus `opensave-native.json`. The
-JSON catalog contains audit metadata such as an archive checksum, upload time,
-and source device; it never contains save contents. Back up the entire
-directory.
+native OpenSave upload) `opensave-native/`, `opensave-native.json`, plus
+`opensave-native-state.json`. The JSON catalog and state contain audit metadata,
+content digests, source devices, parent lineage, current heads, and retained
+conflicts; they never contain save contents. Back up the entire directory.
 
 ## Configuration
 
@@ -164,7 +173,7 @@ fixed release tag rather than `latest`:
 docker compose -f compose.nas.yaml up -d
 ```
 
-`compose.nas.yaml` defaults to `jun9100/game-save:v1.1.0`, maps the service to
+`compose.nas.yaml` defaults to `jun9100/game-save:v1.3.0`, maps the service to
 port `8788`, and stores data at `/volume1/docker/game-save/data`. Set `PUID` and
 `PGID` to the owner of that directory. The generic default binds to loopback;
 choose the NAS private address only when the LAN firewall protects the port.
@@ -199,7 +208,7 @@ for any remote access.
 ```sh
 go test ./...
 go vet ./...
-docker build --build-arg VERSION=v1.1.0 -t game-save:v1.1.0 .
+docker build --build-arg VERSION=v1.3.0 -t game-save:v1.3.0 .
 ```
 
 The GitHub Actions release workflow publishes multi-architecture Docker Hub

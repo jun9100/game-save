@@ -265,6 +265,18 @@ a.row:hover .title { color: var(--accent-text); }
 .chip.active { background: var(--text); color: var(--bg); border-color: var(--text); }
 
 /* Native OpenSave archive audit */
+.opensave-scopes { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin-bottom: 16px; }
+.opensave-scope { min-width: 0; padding: 15px 16px; display: grid; gap: 11px; color: inherit; transition: border-color .15s, box-shadow .15s, transform .15s; }
+.opensave-scope:hover { border-color: var(--border-strong); box-shadow: var(--shadow-lg); transform: translateY(-1px); }
+.opensave-scope-top, .opensave-scope-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.opensave-game { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.opensave-scope-meta { color: var(--muted); font-size: 12px; }
+.opensave-scope-meta span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opensave-scope-stats { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; padding-top: 10px; border-top: 1px solid var(--border); }
+.opensave-scope-stats span { min-width: 0; display: grid; gap: 2px; }
+.opensave-scope-stats small { color: var(--muted); font-size: 11px; }
+.opensave-scope-stats code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+.opensave-scope-stats b { font-size: 13px; text-align: right; }
 .opensave-list { overflow: hidden; }
 .opensave-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(110px, auto) 78px minmax(120px, auto); gap: 12px; align-items: center; padding: 12px 0; border-top: 1px solid var(--border); }
 .opensave-row:first-child { border-top: 0; }
@@ -273,6 +285,22 @@ a.row:hover .title { color: var(--accent-text); }
 .opensave-file .meta { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .opensave-size { color: var(--muted); text-align: right; font-size: 12px; white-space: nowrap; }
 .opensave-hash { color: var(--muted); font-size: 11px; text-align: right; white-space: nowrap; }
+.opensave-scope-hero { overflow: hidden; }
+.opensave-hero-summary { display: grid; grid-template-columns: auto auto minmax(180px, 1.4fr) minmax(130px, 1fr) minmax(160px, 1fr); gap: 14px; align-items: center; padding: 18px; }
+.opensave-hero-summary > div { min-width: 0; display: grid; gap: 3px; }
+.opensave-hero-summary > div > span { color: var(--muted); font-size: 11px; }
+.opensave-hero-summary code, .opensave-hero-summary b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.opensave-history { overflow: hidden; }
+.opensave-snapshot { display: grid; grid-template-columns: minmax(0, 1fr) minmax(140px, .45fr); gap: 14px; align-items: center; padding: 13px 0; border-top: 1px solid var(--border); }
+.opensave-snapshot:first-child { border-top: 0; }
+.opensave-snapshot.conflict { border-left: 3px solid var(--danger); padding-left: 10px; }
+.opensave-snapshot-main { min-width: 0; display: grid; gap: 4px; }
+.opensave-snapshot-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.opensave-snapshot-line code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
+.opensave-snapshot-main > span { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.opensave-lineage { display: grid; gap: 3px; min-width: 0; }
+.opensave-lineage small { color: var(--muted); font-size: 11px; }
+.opensave-lineage code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
 
 /* Save grid */
 .saves { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
@@ -433,6 +461,9 @@ pre.snippet { margin: 0; padding: 12px 14px; background: var(--surface-2); borde
   .snap { grid-template-columns: 22px minmax(0, 1fr); }
   .snap-actions { grid-column: 2; }
   .toolbar select { flex: 1; }
+  .opensave-hero-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .opensave-hero-summary > .badge { justify-self: start; }
+  .opensave-snapshot { grid-template-columns: 1fr; gap: 9px; }
   .opensave-row { grid-template-columns: minmax(0, 1fr) auto; }
   .opensave-size, .opensave-hash { text-align: left; }
   .opensave-hash { grid-column: 1 / -1; }
