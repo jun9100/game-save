@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -166,6 +167,62 @@ func TestBarkRetriesAfterAFailedNotification(t *testing.T) {
 	case <-requests:
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for retry Bark request")
+	}
+}
+
+func TestBarkFailureDoesNotBlockOpenSaveScopeUpload(t *testing.T) {
+	requests := make(chan struct{}, 1)
+	barkServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests <- struct{}{}
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer barkServer.Close()
+
+	s, err := newServerWithOptions(t.TempDir(), testToken, 1024*1024, serverOptions{
+		bark: barkConfig{Endpoint: barkServer.URL + "/device-key", Events: eventUpload},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	httpServer := httptest.NewServer(s.handler())
+	defer httpServer.Close()
+
+	archive := []byte("odyssey-progress-1791")
+	archiveName := "odyssey__main__snapshot-1.zip"
+	if status := putOpenSaveScopeArchive(t, httpServer.URL, "switch", archiveName, archive); status != http.StatusCreated {
+		t.Fatalf("archive upload status = %d, want 201", status)
+	}
+	candidate := openSaveScopeCandidateFor("snapshot-1", archiveName, "", archive, time.Now().UTC())
+	response, body := putOpenSaveScopeCandidate(t, httpServer.URL,
+		"/v1/opensave/scopes/switch/odyssey/snapshots/"+candidate.ID, "", candidate)
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("scope upload status = %d: %s", response.StatusCode, body)
+	}
+
+	headRequest := openSaveScopeRequest(t, http.MethodGet,
+		httpServer.URL+"/v1/opensave/scopes/switch/odyssey/head", nil)
+	headResponse, err := http.DefaultClient.Do(headRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer headResponse.Body.Close()
+	if headResponse.StatusCode != http.StatusOK {
+		t.Fatalf("head status = %d, want 200", headResponse.StatusCode)
+	}
+
+	var head openSaveScopeSnapshot
+	if err := json.NewDecoder(headResponse.Body).Decode(&head); err != nil {
+		t.Fatal(err)
+	}
+	if head.ID != candidate.ID {
+		t.Fatalf("head id = %q, want %q", head.ID, candidate.ID)
+	}
+
+	select {
+	case <-requests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for failed Bark notification")
 	}
 }
 
