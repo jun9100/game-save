@@ -1,11 +1,13 @@
-# Game Save
+# SaveVault 云端（game-save）
+
+> SaveVault（原名 OpenSave）的自建云端。仓库、Docker 镜像（`jun9100/game-save`）、程序名和 `/v1/opensave/...` 接口路径保持不变，已有部署和客户端无需修改。
 
 The cross-component delivery contract and release gates are in
 [`docs/INTEGRATION_ROADMAP.md`](docs/INTEGRATION_ROADMAP.md).
 
 `game-save` is a self-hosted private backend for game-save synchronization. It
 is the standalone successor to `eden-syncd`: the existing Eden protocol remains
-available, while OpenSave uses a separate, typed archive API. The service never
+available, while SaveVault (formerly OpenSave) uses a separate, typed archive API. The service never
 interprets game-save contents.
 
 The next standalone release is `v1.4.1`; its matching image will be

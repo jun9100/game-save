@@ -111,7 +111,7 @@ function scopeByID(id) {
 }
 function scopeTitle(id) {
   const openSave = /^opensave:([^/]+)\/(.+)$/.exec(id || "");
-  if (openSave) return `OpenSave ${openSaveTypeLabel(openSave[1])} · ${openSave[2]}`;
+  if (openSave) return `SaveVault ${openSaveTypeLabel(openSave[1])} · ${openSave[2]}`;
   const scope = scopeByID(id);
   return scope?.title || (id ? `存档 ${shortID(id, 8)}` : "未知存档");
 }
@@ -333,7 +333,7 @@ function renderOverview() {
       <div class="card kpi"><span class="label"><span class="dot ${stats.online_devices ? "on" : ""}"></span>在线设备</span>
         <span class="value">${stats.online_devices}<small class="sub"> / ${stats.devices}</small></span>
         <span class="sub">${onlineDevices.length ? esc(onlineDevices.slice(0, 2).map((d) => d.alias || d.name || "未命名").join("、")) : "暂无设备在线"}</span></div>
-      <a class="card kpi kpi-link" href="#/opensave"><span class="label">OpenSave 归档</span>
+      <a class="card kpi kpi-link" href="#/opensave"><span class="label">SaveVault 归档</span>
         <span class="value">${stats.opensave_files}</span>
         <span class="sub">${formatBytes(stats.opensave_bytes)} · 按 PC、Switch、模拟器隔离</span></a>
       ${server.disk_total ? `<div class="card kpi"><span class="label">数据卷</span>
@@ -563,7 +563,7 @@ async function renderOpenSave() {
   });
 
   main.innerHTML = `
-    ${pageHead("OpenSave 存档", `${scopes.length} 个同步范围 · ${files.length} 个不可变归档`)}
+    ${pageHead("SaveVault 存档", `${scopes.length} 个同步范围 · ${files.length} 个不可变归档`)}
     <div class="toolbar">
       <label class="search">${icon("search")}<input type="search" id="opensave-search" placeholder="搜索归档或来源设备" value="${esc(store.openSaveQuery)}"></label>
       <select id="opensave-type" aria-label="归档类型"><option value="all">全部类型</option>
@@ -576,7 +576,7 @@ async function renderOpenSave() {
     <section class="card opensave-list">
       <div class="card-head"><h2>归档审计</h2><span class="hint">服务端 SHA-256</span></div>
       <div class="card-body">${visible.length ? visible.map(openSaveRow).join("")
-        : emptyState(files.length ? "没有匹配的归档" : "还没有 OpenSave 归档", files.length ? "尝试其他关键词或类型筛选。" : "OpenSave 客户端完成一次原生 game-save 备份后会显示在这里。")}</div>
+        : emptyState(files.length ? "没有匹配的归档" : "还没有 SaveVault 归档", files.length ? "尝试其他关键词或类型筛选。" : "SaveVault 客户端（Android / PC）完成一次原生 game-save 备份后会显示在这里。")}</div>
     </section>`;
 
   const typeSelect = $("#opensave-type");
@@ -621,7 +621,7 @@ async function renderOpenSaveScope(type, gameId) {
   const head = scope.head;
   const snapshots = scope.snapshots || [];
   main.innerHTML = `
-    <a class="back" href="#/opensave">${icon("back")}返回 OpenSave 存档</a>
+    <a class="back" href="#/opensave">${icon("back")}返回 SaveVault 存档</a>
     ${pageHead(scope.gameId, `${openSaveTypeLabel(scope.type)} · ${scope.snapshotCount || snapshots.length} 个可恢复版本`)}
     <section class="card opensave-scope-hero">
       <div class="opensave-hero-summary">
@@ -915,8 +915,8 @@ async function render() {
   const route = currentRoute();
   document.querySelectorAll("#nav a").forEach((link) =>
     link.classList.toggle("active", link.dataset.route === route.nav));
-  const titles = { overview: "概览", saves: "存档", scope: "存档", opensave: "OpenSave", opensaveScope: "OpenSave 存档", devices: "设备", activity: "活动", maintenance: "维护" };
-  document.title = `${titles[route.name]} · Game Save`;
+  const titles = { overview: "概览", saves: "存档", scope: "存档", opensave: "SaveVault", opensaveScope: "SaveVault 存档", devices: "设备", activity: "活动", maintenance: "维护" };
+  document.title = `${titles[route.name]} · SaveVault 云端`;
   switch (route.name) {
     case "saves": return renderSaves();
     case "scope": return renderScope(route.id);
