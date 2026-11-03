@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -464,5 +465,54 @@ func TestOpenSaveScopeAuditShowsAuthorityAndRetainedConflict(t *testing.T) {
 	}
 	if detail.Head == nil || detail.Head.ID != first.ID || len(detail.Snapshots) != 2 || len(detail.Conflicts) != 1 {
 		t.Fatalf("scope detail API = %+v", detail)
+	}
+}
+
+func TestVerifyDetectsCorruptAndMissingOpenSaveArchives(t *testing.T) {
+	s, httpServer := newAdminTestServer(t, t.TempDir())
+	defer httpServer.Close()
+
+	publish := func(game, archive string, body []byte) {
+		t.Helper()
+		if status := putOpenSaveScopeArchive(t, httpServer.URL, "pc", archive, body); status != http.StatusCreated {
+			t.Fatalf("archive %s status = %d", archive, status)
+		}
+		candidate := openSaveScopeCandidateFor("snapshot-1", archive, "", body, time.Now().UTC())
+		response, raw := putOpenSaveScopeCandidate(t, httpServer.URL, "/v1/opensave/scopes/pc/"+game+"/snapshots/snapshot-1", "", candidate)
+		response.Body.Close()
+		if response.StatusCode != http.StatusCreated {
+			t.Fatalf("publish %s status = %d: %s", game, response.StatusCode, raw)
+		}
+	}
+	publish("good", "good__main__snapshot-1.zip", []byte("good save"))
+	publish("tampered", "tampered__main__snapshot-1.zip", []byte("original save"))
+	publish("gone", "gone__main__snapshot-1.zip", []byte("deleted save"))
+
+	tampered, _ := s.openSavePath("pc", "tampered__main__snapshot-1.zip")
+	if err := os.WriteFile(tampered, []byte("tampered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gone, _ := s.openSavePath("pc", "gone__main__snapshot-1.zip")
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+
+	response, body := adminDo(t, http.MethodPost, httpServer.URL+"/admin/api/maintenance/verify", nil)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("verify status = %d", response.StatusCode)
+	}
+	var report verifyReport
+	if err := json.Unmarshal(body, &report); err != nil {
+		t.Fatal(err)
+	}
+	problems := map[string]string{}
+	for _, problem := range report.Problems {
+		if problem.Type != "pc" || len(problem.Scopes) != 1 {
+			t.Fatalf("problem = %+v", problem)
+		}
+		problems[problem.Scopes[0]] = problem.Problem
+	}
+	if report.Objects != 2 || len(problems) != 2 || problems["pc/tampered"] != "corrupt" || problems["pc/gone"] != "missing" {
+		t.Fatalf("verify report = %+v", report)
 	}
 }

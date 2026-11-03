@@ -200,10 +200,14 @@ func (s *server) maintenanceLoop(ctx context.Context, interval time.Duration) {
 }
 
 type verifyProblem struct {
-	Blob      string   `json:"blob"`
+	Blob      string   `json:"blob,omitempty"`
 	Problem   string   `json:"problem"`
 	Scopes    []string `json:"scopes"`
 	Snapshots []string `json:"snapshots"`
+	// SaveVault (OpenSave) archives are named rather than content-addressed:
+	// Type is the native namespace and Archive the file name.
+	Type    string `json:"type,omitempty"`
+	Archive string `json:"archive,omitempty"`
 }
 
 type verifyReport struct {
@@ -271,6 +275,9 @@ func (s *server) verifyObjects(ctx context.Context) (verifyReport, error) {
 			})
 		}
 	}
+	if err := s.verifyOpenSaveArchives(ctx, &report, buffer); err != nil {
+		return report, err
+	}
 	report.Duration = time.Since(started).Seconds()
 
 	s.mu.Lock()
@@ -278,6 +285,70 @@ func (s *server) verifyObjects(ctx context.Context) (verifyReport, error) {
 	s.recordEventLocked(event{Kind: eventVerify, Detail: detail})
 	s.mu.Unlock()
 	return report, nil
+}
+
+// verifyOpenSaveArchives re-hashes every SaveVault archive referenced by a
+// native scope snapshot or retained conflict and compares it with the content
+// digest the server accepted it under.
+func (s *server) verifyOpenSaveArchives(ctx context.Context, report *verifyReport, buffer []byte) error {
+	type reference struct {
+		kind, archive, digest string
+		scopes, snapshots     []string
+	}
+	references := make(map[string]*reference)
+	s.openSaveMu.Lock()
+	for key, stored := range s.openSaveState.Scopes {
+		kind, gameID, _ := strings.Cut(key, "\x00")
+		for _, item := range stored.Snapshots {
+			id := kind + "/" + item.Archive
+			entry := references[id]
+			if entry == nil {
+				entry = &reference{kind: kind, archive: item.Archive, digest: item.ContentDigest}
+				references[id] = entry
+			}
+			entry.scopes = appendUnique(entry.scopes, kind+"/"+gameID)
+			entry.snapshots = append(entry.snapshots, item.ID)
+		}
+	}
+	s.openSaveMu.Unlock()
+
+	for _, entry := range references {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		problem := ""
+		path, ok := s.openSavePath(entry.kind, entry.archive)
+		var file *os.File
+		var err error
+		if ok {
+			file, err = os.Open(path)
+		}
+		switch {
+		case !ok:
+			problem = "unreadable"
+		case errors.Is(err, fs.ErrNotExist):
+			problem = "missing"
+		case err != nil:
+			problem = "unreadable"
+		default:
+			hash := sha256.New()
+			written, copyErr := io.CopyBuffer(hash, file, buffer)
+			_ = file.Close()
+			report.Objects++
+			report.Bytes += written
+			if copyErr != nil {
+				problem = "unreadable"
+			} else if hex.EncodeToString(hash.Sum(nil)) != entry.digest {
+				problem = "corrupt"
+			}
+		}
+		if problem != "" {
+			report.Problems = append(report.Problems, verifyProblem{
+				Problem: problem, Scopes: entry.scopes, Snapshots: entry.snapshots, Type: entry.kind, Archive: entry.archive,
+			})
+		}
+	}
+	return nil
 }
 
 func appendUnique(values []string, value string) []string {
