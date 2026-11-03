@@ -848,15 +848,17 @@ function renderMaintenance() {
         <section class="card">
           <div class="card-head"><h2>完整性校验</h2></div>
           <div class="card-body">
-            <p class="hint">重新计算每个被引用加密对象的 SHA-256，发现丢失或损坏的快照。数据较多时可能需要几分钟。</p>
+            <p class="hint">重新计算每个被引用的 Eden 加密对象和 SaveVault 存档的 SHA-256，发现丢失或损坏的快照。数据较多时可能需要几分钟。</p>
             <div class="page-actions" style="margin-top:12px">
               <button class="btn" data-action="verify">${icon("shield")}开始校验</button></div>
             ${verify ? `<div class="report ${verify.problems.length ? "bad" : "ok"}">
               <b>${verify.problems.length ? `发现 ${verify.problems.length} 个问题` : "全部正常"}</b>
               <span>检查 ${verify.objects} 个对象，共 ${formatBytes(verify.bytes)}，用时 ${verify.duration_seconds.toFixed(1)} 秒。</span>
               ${verify.problems.map((p) => `<span>${p.problem === "missing" ? "丢失" : p.problem === "corrupt" ? "损坏" : "无法读取"}：
-                ${p.scopes.map((id) => `<a href="#/saves/${encodeURIComponent(id)}"><b>${esc(scopeTitle(id))}</b></a>`).join("、")}
-                <code>${esc(shortID(p.blob, 16))}</code></span>`).join("")}
+                ${p.archive
+                  ? p.scopes.map((id) => { const [type, ...game] = id.split("/"); return `<a href="#/opensave/${encodeURIComponent(type)}/${encodeURIComponent(game.join("/"))}"><b>SaveVault ${esc(id)}</b></a>`; }).join("、")
+                  : p.scopes.map((id) => `<a href="#/saves/${encodeURIComponent(id)}"><b>${esc(scopeTitle(id))}</b></a>`).join("、")}
+                <code>${esc(p.archive || shortID(p.blob, 16))}</code></span>`).join("")}
             </div>` : ""}
           </div>
         </section>
